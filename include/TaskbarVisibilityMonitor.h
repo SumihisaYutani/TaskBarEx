@@ -28,6 +28,10 @@ private:
     bool m_lastTaskbarState;
     HWND m_taskbarHwnd;
     
+    // デバウンス機能用
+    bool m_pendingState;
+    int m_stableCount;
+    
     bool getTaskbarVisibility();
     bool getTaskbarVisibilityUsingAppBarData();
     bool getTaskbarVisibilityUsingPosition();

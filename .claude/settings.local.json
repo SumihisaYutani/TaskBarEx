@@ -37,7 +37,8 @@
       "Bash(tree src/ include/ -I '*.o')",
       "Bash(dir /s /b src*.cpp src*.h include*.h)",
       "Bash(timeout 25 ./build/TaskBarEx.exe)",
-      "Bash(timeout 45 ./build/TaskBarEx.exe)"
+      "Bash(timeout 45 ./build/TaskBarEx.exe)",
+      "Bash(iconv --help)"
     ],
     "deny": [],
     "ask": []

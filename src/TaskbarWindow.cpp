@@ -28,6 +28,7 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_focusHook(nullptr)
     , m_isMouseOver(false)
     , m_mouseTrackTimer(new QTimer(this))
+    , m_showDelayTimer(new QTimer(this))
     , m_fixedTaskbarTop(1032)  // デフォルト値
 {
     LOG_INFO("TaskbarWindow constructor started");
@@ -39,6 +40,11 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
         
         // タスクバー風の設定に変更
         setWindowTitle("TaskBarEx");
+        
+        // ★重要：フォーカスを取らないウィンドウフラグを設定（循環参照対策）
+        setWindowFlags(Qt::Tool | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
+        setAttribute(Qt::WA_ShowWithoutActivating, true);  // アクティベートなしで表示
+        
         setGeometry(200, 200, 1000, 48);  // タスクバー風の高さに変更
         LOG_INFO(QString("🔍 Height after setGeometry: %1").arg(height()));
         
@@ -694,7 +700,12 @@ void TaskbarWindow::setupMouseTracking()
     connect(m_mouseTrackTimer, &QTimer::timeout, this, &TaskbarWindow::onMouseTrackCheck);
     m_mouseTrackTimer->start();
     
-    LOG_INFO("✅ Mouse tracking set up successfully");
+    // 表示ディレイタイマーのセットアップ
+    m_showDelayTimer->setSingleShot(true); // ワンショットタイマー
+    m_showDelayTimer->setInterval(300); // 300msディレイ
+    connect(m_showDelayTimer, &QTimer::timeout, this, &TaskbarWindow::onShowDelayTimeout);
+    
+    LOG_INFO("✅ Mouse tracking and show delay timers set up successfully");
 }
 
 void TaskbarWindow::enterEvent(QEnterEvent *event)
@@ -771,54 +782,51 @@ void TaskbarWindow::updateVisibilityBasedOnState()
              .arg(m_isMouseOver ? "yes" : "no")
              .arg(isVisible() ? "yes" : "no"));
     
-    // タスクバーの表示状態に関係なく、マウスがタスクバー領域またはTaskBarEx上にあれば表示
-    if (m_isMouseOver) {
+    // ★修正ロジック: タスクバー表示時でもマウス位置を考慮
+    if (taskbarVisible) {
         if (!isVisible()) {
-            // 非表示状態から表示する時
-            LOG_INFO(QString("🟢 SHOWING TaskBarEx (taskbar %1 + mouse over)")
-                     .arg(taskbarVisible ? "visible" : "hidden"));
-            show();
-            raise();
-        } else {
-            // 既に表示中の場合
-            LOG_INFO(QString("✅ TaskBarEx already visible (taskbar %1 + mouse over)")
-                     .arg(taskbarVisible ? "visible" : "hidden"));
-        }
-        
-        // デバッグ用：show後の詳細位置確認
-        QTimer::singleShot(50, this, [this]() {
-            QRect currentGeometry = geometry();
-            LOG_INFO(QString("🔍 Position after show(): %1,%2 %3x%4")
-                     .arg(currentGeometry.x()).arg(currentGeometry.y())
-                     .arg(currentGeometry.width()).arg(currentGeometry.height()));
-            
-            // Windows API位置も確認
-            HWND hwnd = reinterpret_cast<HWND>(winId());
-            if (hwnd) {
-                RECT winRect;
-                if (GetWindowRect(hwnd, &winRect)) {
-                    LOG_INFO(QString("🔍 WINDOWS API after show: left=%1, top=%2, right=%3, bottom=%4")
-                             .arg(winRect.left).arg(winRect.top)
-                             .arg(winRect.right).arg(winRect.bottom));
-                }
-                
-                // ウィンドウスタイルも確認
-                DWORD style = GetWindowLong(hwnd, GWL_STYLE);
-                DWORD exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-                LOG_INFO(QString("🔍 Window styles: style=0x%1, exStyle=0x%2")
-                         .arg(style, 0, 16).arg(exStyle, 0, 16));
+            // タスクバー表示時：マウスがタスクバー範囲内の場合のみ表示
+            if (m_isMouseOver) {
+                LOG_INFO(QString("🚀 TASKBAR APPEARED - マウスオーバーのため即座に表示"));
+                show();
+            } else {
+                LOG_INFO(QString("⏸️ TASKBAR APPEARED - マウス範囲外のため表示しない"));
             }
-        });
-    } else {
-        if (isVisible()) {
-            // 表示状態から非表示にする時
-            LOG_INFO(QString("🔴 HIDING TaskBarEx (taskbar %1 + mouse away)")
-                     .arg(taskbarVisible ? "visible" : "hidden"));
-            hide();
         } else {
-            // 既に非表示の場合
-            LOG_INFO(QString("⚫ TaskBarEx already hidden (taskbar %1 + mouse away)")
-                     .arg(taskbarVisible ? "visible" : "hidden"));
+            // 既に表示中：マウス位置を確認
+            if (!m_isMouseOver) {
+                LOG_INFO(QString("🔴 HIDING TaskBarEx (taskbar visible but mouse away)"));
+                hide();
+            } else {
+                LOG_INFO(QString("✅ TaskBarEx already visible (taskbar visible + mouse over)"));
+            }
+        }
+        // 非表示タイマーがあればキャンセル
+        m_showDelayTimer->stop();
+    } else {
+        // タスクバー非表示時：ディレイ後に非表示
+        if (isVisible()) {
+            LOG_INFO(QString("⏱️ TASKBAR HIDDEN - starting hide delay timer"));
+            m_showDelayTimer->start(); // 300msディレイ後に非表示
+        } else {
+            LOG_INFO(QString("TaskBarEx already hidden (taskbar hidden)"));
         }
     }
+}
+
+void TaskbarWindow::onShowDelayTimeout()
+{
+    // ★変更：このタイマーは非表示処理用に変更
+    bool taskbarVisible = m_visibilityMonitor->isTaskbarVisible();
+    
+    LOG_INFO(QString("⏰ HIDE DELAY TIMEOUT - タスクバー状態再確認: %1")
+             .arg(taskbarVisible ? "visible" : "hidden"));
+    
+    if (taskbarVisible) {
+        LOG_INFO(QString("❌ HIDE CANCELLED: タスクバーが再表示されたため非表示をキャンセル"));
+        return; // タスクバーが再表示された場合は非表示しない
+    }
+    
+    LOG_INFO(QString("🔴 HIDE CONFIRMED: TaskBarExを非表示"));
+    hide();
 }

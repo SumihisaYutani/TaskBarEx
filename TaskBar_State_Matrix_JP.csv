@@ -1,0 +1,30 @@
+﻿State,TaskbarPosition,TaskbarVisible,MousePosition,AppBarState,TriggerCondition,NextState,Note
+Initial,Outside screen (Y>1120),Hidden,Anywhere,Hidden,Mouse moves to bottom,Taskbar appearing,Normal waiting state
+Taskbar appearing,Bottom area (Y≈1030-1080),Showing,Bottom area,Hidden (300ms delay),300ms delay complete,AppBar showing,Still hidden during delay
+AppBar showing,Bottom area (Y≈1030-1080),Showing,Near taskbar or appbar,Showing,Mouse away,Taskbar hiding,Normal display state
+Taskbar hiding,Moving outside,Hiding transition,Away from bottom,Showing (briefly),Taskbar completely hidden,Initial,During hide animation
+Error1 (Always visible),Bottom area (Y≈1030-1080),Showing,Anywhere,Showing,None (circular reference),None,AppBar prevents taskbar hiding
+Error2 (Flickering),Unstable,Show⇔Hide repeating,Anywhere,Show⇔Hide repeating,Frequent state detection,None,Insufficient debounce
+Error3 (Never shows),Any,Any,Anywhere,Hidden,None (logic error),None,Position detection error
+
+Current Problems,,,,,,,
+Problem1,Taskbar showing,Showing,Away from bottom,Still showing,Should hide,Should return to initial,Circular reference prevents hiding
+Problem2,Any,Any,AppBar area,Wrong showing,Mouse over only,Should stay hidden,Mouse over causes wrong display
+Problem3,Unstable,Unstable,Any,Flickering,Frequent detection,Stable state,Unstable detection logic
+
+Ideal Behavior,,,,,,,
+Case1,Outside,Hidden,Move to bottom,Hidden,Mouse movement,Taskbar appearing,Standard start flow
+Case2,Bottom,Showing,Near bottom,Hidden,300ms elapsed,AppBar showing,Delayed display
+Case3,Bottom,Showing,On AppBar,Showing,Mouse continues,Keep showing,Maintain during use
+Case4,Bottom,Showing,Away from bottom,Showing,Mouse away,Taskbar hiding,Natural end flow
+Case5,Outside,Hidden,Away from bottom,Hidden,Hide complete,Initial,Complete end
+
+Fix Strategy,,,,,,,
+Strategy1,Simplify,Simplify position detection,Optimize mouse range,Simplify display logic,Taskbar appear only,Eliminate circular ref,Remove complex logic
+Strategy2,Improve response,Relax debounce,Immediate state detection,Immediate hide on away,Fast hide detection,No delay response,Better user experience
+Strategy3,Ensure stability,Reliable state detection,Consistent detection logic,Prevent flickering,Stable display,Reliable transitions,Eliminate error states
+
+Implementation Priority,,,,,,,
+High,Improve taskbar detection,Fix position logic,Adjust mouse detection,Limit display triggers,Eliminate circular ref,Ensure stable operation,Basic functionality reliability
+Medium,Optimize response,Adjust debounce,Adjust delay timing,UI improvements,Performance boost,Usability,Better user experience
+Low,Additional features,Make configurable,Customization features,Visual adjustments,Extended features,Future improvements,After basic operation established

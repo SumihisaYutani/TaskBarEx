@@ -1,0 +1,32 @@
+﻿Function,Current Implementation,Problem,Ideal Implementation,Implementation Method,Priority,Impact,Test Method
+Taskbar Detection,IsWindowVisible() + position,Circular reference inaccuracy,Position-only based,Use GetWindowRect() top value,High,Overall operation,Manual taskbar show/hide
+Position Condition,taskbarRect.top >= screenHeight + 40,Complex condition,taskbarRect.top > screenHeight - 10,Simple threshold,High,Detection accuracy,Screen coordinate log
+Debounce Function,2 consecutive checks (700ms),Affects responsiveness,1 check or remove,Immediate state reflection,Medium,Response speed,State change timing
+Monitor Interval,350ms,Somewhat heavy,500ms,Adjust to proper interval,Low,System load,CPU usage monitor
+Mouse Detection Range,Bottom 80px,Range too wide,Taskbar area only,Actual taskbar range ±10px,Medium,Prevent wrong display,Mouse position log
+Display Delay,300ms,Fixed value,300ms (configurable),QTimer singleShot,Low,User experience,Display timing
+Display Trigger,Taskbar appear + mouse over,Complex multiple conditions,Taskbar appear only,Taskbar state change signal only,High,Basic operation,Individual trigger test
+Hide Trigger,Taskbar hide + mouse away,Complex conditions,Taskbar hide only,Immediate hide on taskbar hide,High,Basic operation,Hide timing
+Circular Reference Fix,Temporarily hide TaskBarEx,Causes flickering,No fix needed (improve detection),Position detection sufficient,High,Stability,Long-term operation test
+Log Output,Too detailed,Performance impact,Minimum necessary,Only errors and state changes,Low,Maintainability,Log file size check
+
+Current Code Locations,,,,,,,
+TaskbarVisibilityMonitor.cpp,checkTaskbarVisibility(),Complex debounce,Simple state check,Reduce conditionals,High,Detection accuracy,Unit test
+TaskbarVisibilityMonitor.cpp,getTaskbarVisibilityUsingPosition(),Inaccurate position detection,Accurate threshold,Fix condition,High,Basic function,Boundary value test
+TaskbarWindow.cpp,updateVisibilityBasedOnState(),Complex display logic,Depend on taskbar state only,Simplify conditionals,High,Display control,Show/hide test
+TaskbarWindow.cpp,onMouseTrackCheck(),Mouse range too wide,Taskbar area only,Adjust range value,Medium,Prevent wrong display,Mouse position test
+TaskbarWindow.cpp,onShowDelayTimeout(),Delay processing,Keep current,Timer processing,Low,User experience,Timing test
+
+Fix Steps,,,,,,,
+Step1,Fix taskbar position detection,screenHeight + 40 → screenHeight - 10,Accurate show/hide detection,Change threshold,1,Overall,Coordinate value check
+Step2,Remove debounce,2 checks → immediate,Improve responsiveness,Remove condition,2,Responsiveness,State change speed
+Step3,Reduce mouse detection range,80px → 20px,Prevent wrong display,Change range value,3,Operability,Mouse operation test
+Step4,Simplify display conditions,Multiple conditions → taskbar appear only,Simplification,Remove conditions,4,Stability,Display logic test
+Step5,Remove circular reference fix,Remove temp hide processing,Eliminate flickering,Delete code,5,Stability,Long-term test
+
+Expected Results,,,,,,,
+Basic Operation,AppBar shows only when taskbar shows,Current: always on/flickering,Perfect sync with taskbar,Accurate state detection,Highest,All users,Manual operation check
+Responsiveness,Immediate reaction to state changes,Current: delay exists,Response within 300ms,Optimize debounce,High,Operation feel,Timing measurement
+Stability,Stable long-term operation,Current: unstable,Stable for 24+ hours,Strengthen error handling,High,Reliability,Long-term test
+CPU Usage,Low load,Current: somewhat high,Under 1%,Optimize monitor interval,Medium,System,Resource monitor
+Memory Usage,Constant,Current: slight increase,Keep under 50MB,Prevent memory leaks,Medium,System,Memory monitor

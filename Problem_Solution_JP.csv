@@ -1,0 +1,33 @@
+﻿ProblemID,ProblemName,CurrentSituation,RootCause,Solution,ImplementationLocation,TimeMinutes,TestMethod,SuccessCriteria
+P001,AppBar always visible,AppBar stays visible even when taskbar hides,Circular reference: AppBar display prevents taskbar hiding,Fix position detection threshold,TaskbarVisibilityMonitor.cpp:209,15,Manual taskbar operation,Immediate hide when taskbar hides
+P002,Wrong mouse over display,Wrong display in AppBar area,Mouse detection range too wide,Reduce detection range to 20px,TaskbarWindow.cpp:730,10,Mouse movement in AppBar area,No display on mouse over only
+P003,Flickering,Frequent display/hide switching,Debounce processing conflicts with timer,Remove debounce processing,TaskbarVisibilityMonitor.cpp:68-78,10,Long-term operation monitoring,Maintain stable display state
+P004,Detection delay,700ms delay in state change reaction,2 consecutive checks cause delay,Immediate state reflection,TaskbarVisibilityMonitor.cpp:70-73,5,State change timing measurement,Response within 300ms
+P005,Never displays,Position detection condition wrong,screenHeight + 40 condition error,Fix to screenHeight - 10,TaskbarVisibilityMonitor.cpp:209,5,Operation when taskbar shows,Reliable display when taskbar shows
+
+Fix Priority Order,,,,,,,
+Priority1,P001 + P005,Basic display operation,Position detection fix,taskbarRect.top > screenHeight - 10,TaskbarVisibilityMonitor.cpp,20,Basic operation test,Normal show/hide
+Priority2,P003,Ensure stability,Remove debounce,Immediate state reflection,TaskbarVisibilityMonitor.cpp,15,Long-term stability test,No flickering
+Priority3,P002,Prevent wrong display,Reduce mouse range,80px → 20px,TaskbarWindow.cpp,10,Mouse operation test,No wrong display
+Priority4,P004,Improve responsiveness,Adjust monitor interval,350ms → 300ms,TaskbarVisibilityMonitor.cpp,5,Response speed test,Quick response
+
+Implementation Steps,,,,,,,
+Step1,Fix position detection condition,if (taskbarRect.top >= screenHeight + 40),Reverse condition,if (taskbarRect.top > screenHeight - 10),getTaskbarVisibilityUsingPosition(),5,Coordinate log check,Accurate display detection
+Step2,Remove debounce processing,m_stableCount < 2 condition,Cause of delay,Delete condition statement,checkTaskbarVisibility(),10,Immediate response check,No delay
+Step3,Simplify display logic,Multiple condition display detection,Too complex,Taskbar appear only,updateVisibilityBasedOnState(),15,Display condition test,Simple operation
+Step4,Adjust mouse detection range,m_fixedTaskbarTop - 80,Range too wide,m_fixedTaskbarTop - 20,onMouseTrackCheck(),5,Mouse test,Proper range
+Step5,Remove unnecessary logs,Many detailed logs,Performance impact,Minimum necessary,All files,10,Log size check,Lightweight
+
+Test Cases,,,,,,,
+TC001,Basic display test,Move mouse to screen bottom,Taskbar shows,AppBar shows after 300ms,Manual operation,Expected behavior,Normal display
+TC002,Basic hide test,Move mouse away from screen bottom,Taskbar hides,AppBar hides immediately,Manual operation,Expected behavior,Immediate hide
+TC003,Prevent wrong display test,Move mouse to AppBar area,Taskbar hidden state,AppBar should not show,Manual operation,Should not show,No wrong display
+TC004,Stability test,30 minutes continuous operation,Continue normal operation,No flickering,Automatic test,Stable operation,Long-term stability
+TC005,Response test,Measure state change timing,Within 300ms,Quick response,Timer measurement,Within 300ms,Fast response
+
+Success Criteria Definition,,,,,,,
+Functionality,AppBar shows only when taskbar shows,Current: unstable,100% reliable,Position detection accuracy,Pass/Fail,Manual check,No errors
+Performance,Response within 300ms of state change,Current: 700ms,Within 300ms,Response speed measurement,○/×,Stopwatch,Within criteria
+Stability,1 hour continuous stable operation,Current: unstable,No errors,Long-term test,○/×,Automatic monitoring,No abnormalities
+Operation,No interference with mouse operation,Current: wrong display exists,0 wrong displays,Mouse test,○/×,Operation check,No interference
+Quality,CPU usage under 1%,Current: somewhat high,Under 1%,Resource monitoring,○/×,Task Manager,Lightweight operation

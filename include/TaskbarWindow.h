@@ -24,11 +24,14 @@ class TaskbarWindow : public QMainWindow
 public:
     TaskbarWindow(QWidget *parent = nullptr);
     ~TaskbarWindow();
+    
+    static TaskbarWindow* getInstance() { return s_instance; }
 
 private slots:
     void updateTaskbarItems();
     void onItemClicked(QListWidgetItem *item);
     void onRefreshTriggered();
+    void onShowDelayTimeout();
     void onAlwaysOnTopTriggered(bool checked);
     void onAboutTriggered();
     void onTaskbarVisibilityChanged(bool visible);
@@ -72,6 +75,9 @@ private:
     // マウスオーバー管理
     bool m_isMouseOver;
     QTimer *m_mouseTrackTimer;
+    
+    // 表示ディレイ管理
+    QTimer *m_showDelayTimer;
     
     // 固定タスクバー位置
     int m_fixedTaskbarTop;

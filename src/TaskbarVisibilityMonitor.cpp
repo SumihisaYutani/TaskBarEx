@@ -8,11 +8,13 @@ TaskbarVisibilityMonitor::TaskbarVisibilityMonitor(QObject *parent)
     , m_timer(new QTimer(this))
     , m_lastTaskbarState(true)
     , m_taskbarHwnd(nullptr)
+    , m_pendingState(true)
+    , m_stableCount(0)
 {
     findTaskbarWindow();
     
     connect(m_timer, &QTimer::timeout, this, &TaskbarVisibilityMonitor::checkTaskbarVisibility);
-    m_timer->setInterval(250); // 250ms間隔で監視
+    m_timer->setInterval(350); // 350ms間隔で監視（応答性と安定性のバランス）
 }
 
 TaskbarVisibilityMonitor::~TaskbarVisibilityMonitor()
@@ -63,29 +65,54 @@ void TaskbarVisibilityMonitor::checkTaskbarVisibility()
     
     bool currentState = getTaskbarVisibility();
     
-    // デバッグ用：状態を定期的にログ出力（5秒間隔で継続）
-    static int debugCount = 0;
-    debugCount++;
-    if (debugCount % 20 == 0) { // 250ms × 20 = 5秒間隔
-        LOG_INFO(QString("DEBUG: Taskbar state check - current: %1, last: %2 (check #%3)")
-                 .arg(currentState ? "visible" : "hidden")
+    // ★修正: 表示検出は即座に通知、非表示検出のみdebounce適用
+    if (currentState && currentState != m_lastTaskbarState) {
+        // タスクバー表示は即座に通知（応答性重視）
+        LOG_INFO(QString("🚀 IMMEDIATE SHOW: タスクバー表示を即座に通知 (%1 → %2)")
                  .arg(m_lastTaskbarState ? "visible" : "hidden")
-                 .arg(debugCount));
+                 .arg("visible"));
+        m_lastTaskbarState = currentState;
+        emit taskbarVisibilityChanged(currentState);
+        m_stableCount = 0; // カウンタリセット
+        return;
     }
     
+    // 状態に変化がない場合（表示継続中など）
+    if (currentState == m_lastTaskbarState) {
+        static int noChangeCount = 0;
+        if (noChangeCount++ % 28 == 0) { // 約10秒間隔でログ
+            LOG_INFO(QString("No change: Taskbar state remains %1")
+                     .arg(currentState ? "visible" : "hidden"));
+        }
+        return; // 変化がないので何もしない
+    }
+    
+    // 非表示検出はdebounce適用（誤検知防止）
+    if (currentState == m_pendingState) {
+        m_stableCount++;
+        if (m_stableCount < 2) {
+            return; // まだ安定していない
+        }
+    } else {
+        m_pendingState = currentState;
+        m_stableCount = 1;
+        return; // 新しい状態の最初の検出
+    }
+    
+    // 安定した状態が確認されたので、変更を通知（非表示のみ）
     if (currentState != m_lastTaskbarState) {
-        m_lastTaskbarState = currentState;
-        LOG_INFO(QString("★★★ TASKBAR VISIBILITY CHANGED: %1 → %2 ★★★")
+        LOG_INFO(QString("✅ STABLE STATE CONFIRMED: %1 → %2 (after %3 checks)")
                  .arg(m_lastTaskbarState ? "visible" : "hidden")
-                 .arg(currentState ? "visible" : "hidden"));
-        LOG_INFO("Emitting taskbarVisibilityChanged signal...");
+                 .arg(currentState ? "visible" : "hidden")
+                 .arg(m_stableCount));
+        
+        m_lastTaskbarState = currentState;
         emit taskbarVisibilityChanged(currentState);
-        LOG_INFO("Signal emitted successfully");
     } else {
         // デバッグ用：状態に変化がない場合も時々ログ出力
         static int noChangeCount = 0;
         noChangeCount++;
-        if (noChangeCount % 40 == 0) { // 10秒間隔
+        if (noChangeCount % 28 == 0) { // 350ms × 28 ≈ 10秒間隔
             LOG_INFO(QString("No change: Taskbar state remains %1 (check #%2)")
                      .arg(currentState ? "visible" : "hidden")
                      .arg(noChangeCount));
@@ -182,9 +209,42 @@ bool TaskbarVisibilityMonitor::getTaskbarVisibilityUsingAppBarData()
 
 bool TaskbarVisibilityMonitor::getTaskbarVisibilityUsingPosition()
 {
+    // ★改良：位置ベースでタスクバー可視性を判定（IsWindowVisibleに依存しない）
+    bool visible = true; // デフォルトは表示状態と仮定
     
-    // タスクバーウィンドウの可視性をチェック
-    bool visible = IsWindowVisible(m_taskbarHwnd);
+    // タスクバーの実際の位置とサイズを取得
+    RECT taskbarRect;
+    if (!GetWindowRect(m_taskbarHwnd, &taskbarRect)) {
+        return true; // 取得失敗時は表示と仮定
+    }
+    
+    // 画面サイズを取得
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    
+    // ★修正：タスクバーが通常表示位置より上にある場合は隠れていると判定  
+    if (taskbarRect.top < screenHeight - 60) {
+        // タスクバーが画面下端から60px以上上にある場合は隠れていると判定
+        // 通常: ~1078, 隠れ: ~1032 なので screenHeight-60 = 1020 が閾値
+        visible = false;
+        
+        static int hiddenLogCount = 0;
+        if (hiddenLogCount++ % 10 == 0) {
+            LOG_INFO(QString("📍 POSITION CHECK: Taskbar hidden - screen=%1x%2, taskbar=%3,%4-%5,%6")
+                     .arg(screenWidth).arg(screenHeight)
+                     .arg(taskbarRect.left).arg(taskbarRect.top)
+                     .arg(taskbarRect.right).arg(taskbarRect.bottom));
+        }
+    } else {
+        // タスクバーが画面付近にある場合は表示状態
+        static int visibleLogCount = 0;
+        if (visibleLogCount++ % 20 == 0) {
+            LOG_INFO(QString("📍 POSITION CHECK: Taskbar visible - screen=%1x%2, taskbar=%3,%4-%5,%6")
+                     .arg(screenWidth).arg(screenHeight)
+                     .arg(taskbarRect.left).arg(taskbarRect.top)
+                     .arg(taskbarRect.right).arg(taskbarRect.bottom));
+        }
+    }
     
     // タスクバーの座標変化をリアルタイム監視
     static RECT lastRect = {0, 0, 0, 0};
