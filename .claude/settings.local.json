@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(git init)",
+      "Bash(git add CLAUDE.md README.md docs/)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd initial project documentation and technical research\n\n- Added CLAUDE.md with comprehensive technical investigation results\n- Added README.md with project overview and requirements  \n- Added detailed Windows API integration documentation\n- Added application grouping implementation guide\n- Researched Qt6 Windows taskbar integration solutions\n- Documented Windows 10 taskbar specifications and DPI handling\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(cmake -B build)",
+      "Bash(dir /s *.cpp *.h *.ui)",
+      "Bash(PATH=\"/c/Qt/6.10.0/mingw_64/bin:$PATH\")",
+      "Bash(./TaskBarEx.exe)",
+      "Bash(cmake --build build)",
+      "Bash(./build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/TaskBarEx.exe)",
+      "Bash(export PATH=\"/c/Qt/6.10.0/mingw_64/bin:$PATH\")",
+      "Bash(taskkill /IM TaskBarEx.exe /F)",
+      "Bash(mingw32-make -C build)",
+      "Bash(taskkill /PID 4188 /F)",
+      "Read(//c/Qt/**)",
+      "Bash(export PATH=\"/c/Qt/Tools/CMake_64/bin:/c/Qt/6.10.0/mingw_64/bin:$PATH\")",
+      "Bash(/c/Qt/Tools/CMake_64/bin/cmake.exe --build build)",
+      "Bash(/c/Qt/Tools/CMake_64/bin/cmake.exe -B build -G \"MinGW Makefiles\")",
+      "Bash(./build/TaskBarEx.exe)",
+      "Bash(taskkill /f /im TaskBarEx.exe)",
+      "Bash(timeout 10 ./build/TaskBarEx.exe)",
+      "Bash(timeout 15 ./build/TaskBarEx.exe)",
+      "Bash(timeout 20 ./build/TaskBarEx.exe)",
+      "Bash(timeout 30 ./build/TaskBarEx.exe)",
+      "Bash(tree src/ include/ ui/ -I '*.o')",
+      "Bash(start ./build/TaskBarEx.exe)",
+      "Bash(timeout 5 ./build/TaskBarEx.exe)",
+      "Bash(export PATH=\"/c/Qt/6.10.0/mingw_64/bin:/c/Qt/Tools/CMake_64/bin:$PATH\")",
+      "Bash(tasklist)",
+      "Bash(taskkill //f //im TaskBarEx.exe)",
+      "Bash(ldd build/TaskBarEx.exe)",
+      "Bash(/c/Qt/Tools/CMake_64/bin/cmake.exe --build build --verbose)",
+      "Bash(cmd //c run_taskbarex.bat)",
+      "Bash(tree src/ include/ -I '*.o')",
+      "Bash(dir /s /b src*.cpp src*.h include*.h)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

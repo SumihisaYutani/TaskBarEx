@@ -104,26 +104,81 @@ TaskbarViewer/
 
 - [x] 技術調査完了
 - [x] アーキテクチャ設計完了
-- [ ] プロジェクト構成作成
-- [ ] 基本ウィンドウ列挙機能実装
-- [ ] アイコン取得機能実装
-- [ ] グループ化機能実装
-- [ ] UI実装
-- [ ] テスト・デバッグ
+- [x] プロジェクト構成作成
+- [x] 基本ウィンドウ列挙機能実装
+- [x] アイコン取得機能実装
+- [x] グループ化機能実装
+- [x] UI実装（Windows風タスクバーデザイン）
+- [x] DLL依存関係解決
+- [x] Qt6プラットフォームプラグイン対応
+- [x] 安全なHICON→QPixmap変換実装
+- [x] タスクバー自動表示・非表示連動機能
+- [x] テスト・デバッグ完了
+
+### 解決済み問題
+- ✅ Qt Creator実行時のDLL不足エラー
+- ✅ プラットフォームプラグイン初期化エラー
+- ✅ HICON変換時の初期化エラー
+- ✅ ウィンドウ表示問題
+- ✅ アイコン表示の四角表示問題
+- ✅ ターミナル窓表示問題
 
 ## 開発コマンド
 
+### ビルド手順（Claude Code用）
+
 ```bash
-# ビルド
-cmake -B build
-cmake --build build
+# プロジェクトディレクトリに移動
+cd /d/ClaudeCode/project/TaskBarEx
 
-# テスト実行（予定）
-./build/TaskbarEx
+# Qt6とCMakeのパス設定
+export PATH="/c/Qt/6.10.0/mingw_64/bin:/c/Qt/Tools/CMake_64/bin:$PATH"
 
-# ライントチェック（予定）
-# 適切なコマンドは実装時に追加
+# ビルド実行
+/c/Qt/Tools/CMake_64/bin/cmake.exe -B build
+/c/Qt/Tools/CMake_64/bin/cmake.exe --build build
 ```
+
+### 実行パス
+
+```bash
+# 実行ファイル（Qt6 DLL自動コピー済み）
+./build/TaskBarEx.exe
+
+# 旧パス（Qt Creatorビルド用 - 現在は使用しない）
+./build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/TaskBarEx.exe
+```
+
+### ログファイル場所
+
+```bash
+# 現在のログ保存場所
+./build/log/TaskBarEx_YYYY-MM-DD_HH-MM-SS.log
+
+# 最新ログファイル確認
+ls -lt build/log/ | head -3
+```
+
+### トラブルシューティング
+
+- **Qt6 DLL不足エラー**: CMakeLists.txtで自動DLLコピーを実装済み
+- **プラットフォームプラグイン不足**: platforms/qwindows.dll自動コピー済み
+- **Qt Creatorでの実行**: 上記ビルド手順でDLL依存関係解決済み
+
+## Claude Code 対話設定
+
+**重要：Claude Codeは対話を続けていると日本語を忘れて英語のみになる傾向があります。**
+
+### 言語設定
+- **常に日本語で対話すること**
+- 技術用語は適宜英語併記でも可
+- コメントやログメッセージは日本語で記載
+- 変数名・関数名は英語でも可（Qt慣例に従う）
+
+### 開発時の注意点
+- ビルドパスは絶対パスで指定すること
+- ログファイルは日時付きで自動生成される
+- デバッグ時は詳細ログを有効活用すること
 
 ## 参考リンク
 

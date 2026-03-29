@@ -1,0 +1,74 @@
+# Build directories
+build/
+debug/
+release/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.user
+
+# Qt
+*.pro.user
+*.pro.user.*
+*.qmlc
+*.jsc
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# Object files
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.lib
+*.a
+*.exp
+*.pdb
+*.ilk
+
+# Executables
+*.exe
+TaskBarEx
+TaskBarEx.exe
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# IDE
+.vscode/
+*.pro.user
+*.kdevelop4
+
+# Package files
+*.zip
+*.7z
+*.tar.gz
+
+# Log files
+*.log
+
+# User settings
+config.ini
+settings.ini

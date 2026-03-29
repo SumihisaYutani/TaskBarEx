@@ -1,0 +1,33 @@
+<RCC>
+    <qresource prefix="/icons">
+        <!-- アプリケーションアイコン -->
+        <file>app/taskbar_ex_16.png</file>
+        <file>app/taskbar_ex_32.png</file>
+        <file>app/taskbar_ex_48.png</file>
+        <file>app/taskbar_ex_64.png</file>
+        <file>app/taskbar_ex_128.png</file>
+        <file>app/taskbar_ex_256.png</file>
+        
+        <!-- UI アイコン -->
+        <file>ui/refresh.png</file>
+        <file>ui/settings.png</file>
+        <file>ui/exit.png</file>
+        <file>ui/minimize.png</file>
+        <file>ui/maximize.png</file>
+        <file>ui/close.png</file>
+        <file>ui/expand.png</file>
+        <file>ui/collapse.png</file>
+        
+        <!-- デフォルトアプリアイコン -->
+        <file>defaults/application.png</file>
+        <file>defaults/document.png</file>
+        <file>defaults/folder.png</file>
+        <file>defaults/executable.png</file>
+        <file>defaults/system.png</file>
+        
+        <!-- システムトレイアイコン -->
+        <file>tray/active.png</file>
+        <file>tray/inactive.png</file>
+        <file>tray/error.png</file>
+    </qresource>
+</RCC>

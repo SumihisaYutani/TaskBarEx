@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/styles">
+        <!-- メインスタイルシート -->
+        <file>main.qss</file>
+        <file>taskbar.qss</file>
+        <file>dialogs.qss</file>
+        
+        <!-- Windows 10 テーマ -->
+        <file>themes/windows10_light.qss</file>
+        <file>themes/windows10_dark.qss</file>
+        
+        <!-- カスタムテーマ -->
+        <file>themes/modern_light.qss</file>
+        <file>themes/modern_dark.qss</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TaskbarWindow</class>
+ <widget class="QMainWindow" name="TaskbarWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>320</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>TaskBarEx - Taskbar Extension</string>
+  </property>
+  <!-- アイコンファイルが存在しないため一時的に無効化 -->
+  <!--
+  <property name="windowIcon">
+   <iconset>
+    <normaloff>:/icons/app/taskbar_ex_32.png</normaloff>:/icons/app/taskbar_ex_32.png</iconset>
+  </property>
+  -->
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QHBoxLayout" name="mainLayout">
+    <property name="spacing">
+     <number>2</number>
+    </property>
+    <property name="leftMargin">
+     <number>2</number>
+    </property>
+    <property name="topMargin">
+     <number>2</number>
+    </property>
+    <property name="rightMargin">
+     <number>2</number>
+    </property>
+    <property name="bottomMargin">
+     <number>2</number>
+    </property>
+    <item>
+     <widget class="QScrollArea" name="taskbarScrollArea">
+      <property name="styleSheet">
+       <string>QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollBar:horizontal {
+    height: 12px;
+    background: transparent;
+}
+
+QScrollBar::handle:horizontal {
+    background: #666;
+    border-radius: 6px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}</string>
+      </property>
+      <property name="horizontalScrollBarPolicy">
+       <enum>Qt::ScrollBarAsNeeded</enum>
+      </property>
+      <property name="verticalScrollBarPolicy">
+       <enum>Qt::ScrollBarAlwaysOff</enum>
+      </property>
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <widget class="QWidget" name="scrollAreaWidgetContents">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>316</width>
+         <height>44</height>
+        </rect>
+       </property>
+       <layout class="QHBoxLayout" name="taskbarButtonLayout">
+        <property name="spacing">
+         <number>2</number>
+        </property>
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>320</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuView">
+    <property name="title">
+     <string>表示(&amp;V)</string>
+    </property>
+    <addaction name="actionRefresh"/>
+    <addaction name="separator"/>
+    <addaction name="actionAlwaysOnTop"/>
+   </widget>
+   <widget class="QMenu" name="menuOptions">
+    <property name="title">
+     <string>オプション(&amp;O)</string>
+    </property>
+    <addaction name="actionGroupingMode"/>
+    <addaction name="separator"/>
+    <addaction name="actionUpdateInterval"/>
+   </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title">
+     <string>ヘルプ(&amp;H)</string>
+    </property>
+    <addaction name="actionAbout"/>
+   </widget>
+   <addaction name="menuView"/>
+   <addaction name="menuOptions"/>
+   <addaction name="menuHelp"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionRefresh">
+   <property name="text">
+    <string>更新(&amp;R)</string>
+   </property>
+   <property name="shortcut">
+    <string>F5</string>
+   </property>
+  </action>
+  <action name="actionAlwaysOnTop">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>常に最前面に表示(&amp;T)</string>
+   </property>
+  </action>
+  <action name="actionGroupingMode">
+   <property name="text">
+    <string>グループ化設定(&amp;G)</string>
+   </property>
+  </action>
+  <action name="actionUpdateInterval">
+   <property name="text">
+    <string>更新間隔設定(&amp;I)</string>
+   </property>
+  </action>
+  <action name="actionAbout">
+   <property name="text">
+    <string>TaskBarExについて(&amp;A)</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
