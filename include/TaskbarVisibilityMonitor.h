@@ -29,6 +29,8 @@ private:
     HWND m_taskbarHwnd;
     
     bool getTaskbarVisibility();
+    bool getTaskbarVisibilityUsingAppBarData();
+    bool getTaskbarVisibilityUsingPosition();
     void findTaskbarWindow();
 };
 

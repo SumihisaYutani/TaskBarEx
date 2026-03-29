@@ -15,6 +15,9 @@
 #include <QLabel>
 #include <windows.h>
 
+// 静的メンバーの初期化
+TaskbarWindow* TaskbarWindow::s_instance = nullptr;
+
 TaskbarWindow::TaskbarWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::TaskbarWindow)  // UIファイルを再有効化
@@ -22,6 +25,10 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_model(new TaskbarModel(this))
     , m_groupManager(new TaskbarGroupManager(this))
     , m_visibilityMonitor(new TaskbarVisibilityMonitor(this))
+    , m_focusHook(nullptr)
+    , m_isMouseOver(false)
+    , m_mouseTrackTimer(new QTimer(this))
+    , m_fixedTaskbarTop(1032)  // デフォルト値
 {
     LOG_INFO("TaskbarWindow constructor started");
     
@@ -33,6 +40,11 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
         // タスクバー風の設定に変更
         setWindowTitle("TaskBarEx");
         setGeometry(200, 200, 1000, 48);  // タスクバー風の高さに変更
+        LOG_INFO(QString("🔍 Height after setGeometry: %1").arg(height()));
+        
+        // 高さを強制的に固定
+        setFixedHeight(48);
+        LOG_INFO(QString("🔍 Height after setFixedHeight: %1").arg(height()));
         
         // メニューバーを非表示にしてスペースを確保
         menuBar()->setVisible(false);
@@ -143,10 +155,74 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     }
     
     LOG_INFO("Taskbar functionality restoration completed");
+    
+    try {
+        LOG_INFO("Step 5: Setting up window positioning...");
+        positionAboveTaskbar();
+        LOG_INFO("Step 5 completed (window positioning)");
+    } catch (...) {
+        LOG_ERROR("Step 5 (positionAboveTaskbar) failed");
+    }
+    
+    try {
+        LOG_INFO("Step 6: Setting up focus monitoring...");
+        setupWindowFocusHook();
+        LOG_INFO("Step 6 completed (focus monitoring)");
+    } catch (...) {
+        LOG_ERROR("Step 6 (setupWindowFocusHook) failed");
+    }
+    
+    try {
+        LOG_INFO("Step 7: Setting up mouse tracking...");
+        setupMouseTracking();
+        LOG_INFO("Step 7 completed (mouse tracking)");
+    } catch (...) {
+        LOG_ERROR("Step 7 (setupMouseTracking) failed");
+    }
+    
+    try {
+        LOG_INFO("Step 8: Setting initial visibility state...");
+        
+        // 🔍 デバッグ用：位置テストのため一時的に表示
+        LOG_INFO("🔍 DEBUG: Testing position by showing window briefly...");
+        show();
+        QTimer::singleShot(200, this, [this]() {
+            QRect currentGeometry = geometry();
+            LOG_INFO(QString("🔍 TEST Position when shown: %1,%2 %3x%4")
+                     .arg(currentGeometry.x()).arg(currentGeometry.y())
+                     .arg(currentGeometry.width()).arg(currentGeometry.height()));
+            
+            HWND hwnd = reinterpret_cast<HWND>(winId());
+            if (hwnd) {
+                RECT winRect;
+                if (GetWindowRect(hwnd, &winRect)) {
+                    LOG_INFO(QString("🔍 TEST WINDOWS API: left=%1, top=%2, right=%3, bottom=%4")
+                             .arg(winRect.left).arg(winRect.top)
+                             .arg(winRect.right).arg(winRect.bottom));
+                }
+            }
+            
+            // テスト後は非表示に戻す
+            hide();
+            LOG_INFO("🔍 DEBUG: Test completed, window hidden");
+        });
+        
+        LOG_INFO("Step 8 completed (debug test mode)");
+    } catch (...) {
+        LOG_ERROR("Step 8 (debug test) failed");
+    }
+    
+    LOG_INFO("TaskbarWindow created successfully");
 }
 
 TaskbarWindow::~TaskbarWindow()
 {
+    // フォーカスフックをクリーンアップ
+    cleanupWindowFocusHook();
+    
+    // 静的インスタンスをリセット
+    s_instance = nullptr;
+    
     delete ui;
 }
 
@@ -159,40 +235,53 @@ void TaskbarWindow::positionAboveTaskbar()
              .arg(screenGeometry.x()).arg(screenGeometry.y())
              .arg(screenGeometry.width()).arg(screenGeometry.height()));
     
-    // Windowsタスクバーの位置と高さを取得
-    RECT taskbarRect;
-    HWND taskbarHwnd = FindWindow(L"Shell_TrayWnd", nullptr);
-    if (taskbarHwnd && GetWindowRect(taskbarHwnd, &taskbarRect)) {
-        int taskbarHeight = taskbarRect.bottom - taskbarRect.top;
-        int taskbarY = taskbarRect.top;
-        
-        LOG_INFO(QString("Taskbar found - Height: %1, Y: %2").arg(taskbarHeight).arg(taskbarY));
-        
-        // アプリの下端とタスクバーの上端の間に50pxの隙間を確保（テスト用）
-        int windowY = taskbarY - height() - 50;
-        int windowX = screenGeometry.left();
-        int windowWidth = screenGeometry.width();
-        
-        // Y座標が負数にならないよう調整
-        if (windowY < 0) {
-            windowY = screenGeometry.height() - taskbarHeight - height() - 10;
-        }
-        
-        LOG_INFO(QString("Setting window position: %1,%2 %3x%4")
-                 .arg(windowX).arg(windowY).arg(windowWidth).arg(height()));
-        
-        setGeometry(windowX, windowY, windowWidth, height());
-    } else {
-        // フォールバック: 画面下部に配置
-        int windowY = screenGeometry.height() - 48 - height() - 20;
-        
-        LOG_WARNING("Taskbar not found, using fallback positioning");
-        LOG_INFO(QString("Fallback position: %1,%2 %3x%4")
-                 .arg(screenGeometry.left()).arg(windowY)
-                 .arg(screenGeometry.width()).arg(height()));
-        
-        setGeometry(screenGeometry.left(), windowY, screenGeometry.width(), height());
+    // タスクバーの完全表示時の固定位置を計算（動的位置は使わない）
+    // 標準的なタスクバー高さ48pxで、画面下端から48px上が完全表示位置
+    int standardTaskbarHeight = 48;
+    int fixedTaskbarY = screenGeometry.height() - standardTaskbarHeight;
+    m_fixedTaskbarTop = fixedTaskbarY;  // 固定位置を保存
+    
+    LOG_INFO(QString("Using FIXED taskbar position: %1 (screen height: %2, taskbar height: %3)")
+             .arg(fixedTaskbarY).arg(screenGeometry.height()).arg(standardTaskbarHeight));
+    
+    // TaskBarExの下端をタスクバーの上端にぴったり合わせる
+    int spacing = 0; // 間隔なしでタスクバー直上に配置
+    int windowY = fixedTaskbarY - height() - spacing;
+    int windowX = screenGeometry.left();
+    int windowWidth = screenGeometry.width();
+    
+    // Y座標が負数にならないよう調整（画面上端を超える場合）
+    if (windowY < screenGeometry.top()) {
+        windowY = screenGeometry.top();
+        LOG_WARNING("TaskBarEx position adjusted to avoid going above screen");
     }
+    
+    LOG_INFO(QString("Setting FIXED window position: %1,%2 %3x%4 (directly above taskbar)")
+             .arg(windowX).arg(windowY).arg(windowWidth).arg(height()));
+    
+    setGeometry(windowX, windowY, windowWidth, height());
+    
+    // デバッグ用：実際に設定された位置を確認
+    QTimer::singleShot(100, this, [this]() {
+        QRect actualGeometry = geometry();
+        LOG_INFO(QString("🔍 ACTUAL window position after setGeometry: %1,%2 %3x%4")
+                 .arg(actualGeometry.x()).arg(actualGeometry.y())
+                 .arg(actualGeometry.width()).arg(actualGeometry.height()));
+        
+        // Windows API でも確認
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        if (hwnd) {
+            RECT winRect;
+            if (GetWindowRect(hwnd, &winRect)) {
+                LOG_INFO(QString("🔍 WINDOWS API position: left=%1, top=%2, right=%3, bottom=%4")
+                         .arg(winRect.left).arg(winRect.top)
+                         .arg(winRect.right).arg(winRect.bottom));
+            }
+        }
+    });
+    
+    // 静的インスタンスを設定
+    s_instance = this;
 }
 
 void TaskbarWindow::setupConnections()
@@ -208,6 +297,8 @@ void TaskbarWindow::setupConnections()
     // タスクバー監視機能
     connect(m_visibilityMonitor, &TaskbarVisibilityMonitor::taskbarVisibilityChanged,
             this, &TaskbarWindow::onTaskbarVisibilityChanged);
+    
+    // フォーカス変更監視機能は setupWindowFocusHook() で Windows API を使用
     
     // タスクバー監視開始
     m_visibilityMonitor->startMonitoring();
@@ -366,26 +457,27 @@ void TaskbarWindow::createTaskbarButton(const WindowInfo& window)
     button->setMaximumSize(44, 44);
     button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     
-    // アイコンを設定（空の場合はデフォルトアイコン）
-    if (!window.icon.isNull()) {
-        LOG_INFO(QString("Icon size: %1x%2").arg(window.icon.width()).arg(window.icon.height()));
-        QIcon icon(window.icon);
-        button->setIcon(icon);
-        button->setIconSize(QSize(36, 36));  // より大きなアイコンサイズ
-        button->setText(""); // テキストをクリア
-        LOG_INFO("Button has icon - icon set successfully");
-        
-        // デバッグ用：アイコンが実際に設定されているかチェック
-        if (!button->icon().isNull()) {
-            LOG_INFO("Button icon verification: Icon is set");
-        } else {
-            LOG_ERROR("Button icon verification: Icon is NULL after setting!");
+    // アイコンとテキストの混合表示（ハングアップ対策）
+    if (!window.icon.isNull() && window.icon.width() > 0 && window.icon.height() > 0) {
+        try {
+            // アイコンが有効な場合のみ設定
+            LOG_INFO(QString("Valid icon detected - size: %1x%2").arg(window.icon.width()).arg(window.icon.height()));
+            QIcon icon(window.icon);
+            button->setIcon(icon);
+            button->setIconSize(QSize(32, 32));  // 安全なアイコンサイズ
+            button->setText(""); // テキストをクリア
+            LOG_INFO("Button with icon created successfully");
+        } catch (...) {
+            // アイコン設定でエラーが発生した場合はテキスト表示にフォールバック
+            LOG_WARNING("Icon setting failed, falling back to text");
+            QString displayText = window.title.isEmpty() ? "?" : window.title.left(2).toUpper();
+            button->setText(displayText);
         }
     } else {
-        // デフォルトアイコンを設定（アプリ名の最初の文字を使用）
-        QString firstChar = window.title.isEmpty() ? "?" : window.title.left(1).toUpper();
-        button->setText(firstChar);
-        LOG_INFO("Button has text placeholder");
+        // アイコンが無効な場合はテキスト表示
+        QString displayText = window.title.isEmpty() ? "?" : window.title.left(2).toUpper();
+        button->setText(displayText);
+        LOG_INFO(QString("Button created with text: '%1' for window: %2").arg(displayText).arg(window.title));
     }
     
     // Windows風タスクバーボタンスタイル（統一）
@@ -488,17 +580,245 @@ void TaskbarWindow::onAboutTriggered()
 
 void TaskbarWindow::onTaskbarVisibilityChanged(bool visible)
 {
-    LOG_INFO(QString("Taskbar visibility changed: %1 - Adjusting window visibility")
+    LOG_INFO(QString("🔔 SIGNAL RECEIVED: onTaskbarVisibilityChanged(%1)")
              .arg(visible ? "visible" : "hidden"));
+    LOG_INFO("Adjusting TaskBarEx window visibility based on new state...");
     
-    if (visible) {
-        // タスクバーが表示されたら、TaskBarExを表示
-        show();
-        raise();
-        LOG_INFO("TaskBarEx window shown");
+    // 位置は固定なので、visibilityのみ更新（頻繁な位置調整を避ける）
+    updateVisibilityBasedOnState();
+}
+
+void TaskbarWindow::onApplicationFocusChanged(QWidget *old, QWidget *now)
+{
+    Q_UNUSED(old);
+    
+    LOG_INFO(QString("🔀 FOCUS CHANGED: Focus moved to %1")
+             .arg(now ? now->objectName() : "null"));
+    
+    // TaskBarEx自体がフォーカスされた場合は何もしない
+    if (now && (now == this || now->window() == this)) {
+        LOG_INFO("Focus is on TaskBarEx - keeping visible");
+        return;
+    }
+    
+    // TaskBarEx以外のアプリケーションがフォーカスされた場合
+    if (now && now->window() != this) {
+        LOG_INFO("Focus moved to external application - updating visibility based on state...");
+        updateVisibilityBasedOnState();
+    }
+}
+
+void TaskbarWindow::setupWindowFocusHook()
+{
+    LOG_INFO("Setting up Windows focus hook...");
+    
+    // SetWinEventHook を使ってシステムレベルのフォーカス変更を監視
+    m_focusHook = SetWinEventHook(
+        EVENT_SYSTEM_FOREGROUND,     // 最小イベント
+        EVENT_SYSTEM_FOREGROUND,     // 最大イベント  
+        NULL,                        // モジュールハンドル
+        WinEventProc,                // コールバック関数
+        0,                          // プロセスID（全プロセス）
+        0,                          // スレッドID（全スレッド）
+        WINEVENT_OUTOFCONTEXT       // フラグ
+    );
+    
+    if (m_focusHook) {
+        LOG_INFO("✅ Windows focus hook set up successfully");
     } else {
-        // タスクバーが非表示になったら、TaskBarExも非表示
-        hide();
-        LOG_INFO("TaskBarEx window hidden");
+        LOG_ERROR("❌ Failed to set up Windows focus hook");
+    }
+}
+
+void TaskbarWindow::cleanupWindowFocusHook()
+{
+    if (m_focusHook) {
+        LOG_INFO("Cleaning up Windows focus hook...");
+        UnhookWinEvent(m_focusHook);
+        m_focusHook = nullptr;
+        LOG_INFO("✅ Windows focus hook cleaned up");
+    }
+}
+
+void CALLBACK TaskbarWindow::WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event,
+                                          HWND hwnd, LONG idObject, LONG idChild,
+                                          DWORD dwEventThread, DWORD dwmsEventTime)
+{
+    Q_UNUSED(hWinEventHook);
+    Q_UNUSED(idObject);
+    Q_UNUSED(idChild);
+    Q_UNUSED(dwEventThread);
+    Q_UNUSED(dwmsEventTime);
+    
+    // EVENT_SYSTEM_FOREGROUND イベントのみ処理
+    if (event == EVENT_SYSTEM_FOREGROUND && hwnd && s_instance) {
+        // Qt のメタシステムを使ってメインスレッドで処理
+        QMetaObject::invokeMethod(s_instance, "onWindowFocusChanged", 
+                                  Qt::QueuedConnection, Q_ARG(HWND, hwnd));
+    }
+}
+
+void TaskbarWindow::onWindowFocusChanged(HWND hwnd)
+{
+    // ウィンドウタイトルを取得
+    wchar_t windowTitle[256];
+    GetWindowTextW(hwnd, windowTitle, sizeof(windowTitle) / sizeof(wchar_t));
+    QString title = QString::fromWCharArray(windowTitle);
+    
+    LOG_INFO(QString("🔀 SYSTEM FOCUS CHANGED: Window '%1' (HWND: 0x%2)")
+             .arg(title).arg(reinterpret_cast<quintptr>(hwnd), 0, 16));
+    
+    // TaskBarEx自体のウィンドウかチェック
+    HWND taskbarExHwnd = reinterpret_cast<HWND>(winId());
+    if (hwnd == taskbarExHwnd) {
+        LOG_INFO("Focus is on TaskBarEx - keeping visible");
+        return;
+    }
+    
+    // TaskBarEx以外のアプリケーションがフォーカスされた場合
+    LOG_INFO("Focus moved to external application - updating visibility based on state...");
+    updateVisibilityBasedOnState();
+}
+
+// マウストラッキング機能の実装
+void TaskbarWindow::setupMouseTracking()
+{
+    LOG_INFO("Setting up mouse tracking...");
+    
+    // マウストラッキングを有効化
+    setMouseTracking(true);
+    setAttribute(Qt::WA_Hover, true);
+    
+    // マウス位置チェック用のタイマーをセットアップ
+    m_mouseTrackTimer->setInterval(100); // 100ms間隔でチェック
+    connect(m_mouseTrackTimer, &QTimer::timeout, this, &TaskbarWindow::onMouseTrackCheck);
+    m_mouseTrackTimer->start();
+    
+    LOG_INFO("✅ Mouse tracking set up successfully");
+}
+
+void TaskbarWindow::enterEvent(QEnterEvent *event)
+{
+    Q_UNUSED(event);
+    LOG_INFO("🖱️ MOUSE ENTERED: TaskBarEx window");
+    m_isMouseOver = true;
+    updateVisibilityBasedOnState();
+}
+
+void TaskbarWindow::leaveEvent(QEvent *event)
+{
+    Q_UNUSED(event);
+    LOG_INFO("🖱️ MOUSE LEFT: TaskBarEx window");
+    m_isMouseOver = false;
+    updateVisibilityBasedOnState();
+}
+
+void TaskbarWindow::onMouseTrackCheck()
+{
+    // グローバルマウス位置を取得
+    QPoint globalPos = QCursor::pos();
+    QPoint localPos = mapFromGlobal(globalPos);
+    
+    // TaskBarEx内にマウスがあるかチェック
+    bool mouseInTaskBarEx = rect().contains(localPos);
+    
+    // タスクバー領域および直上80pxでマウス検出を有効化
+    bool mouseInTaskbar = false;
+    QScreen *screen = QApplication::primaryScreen();
+    if (screen) {
+        QRect screenGeometry = screen->geometry();
+        // 実際のタスクバー位置を取得して、その周辺を検出範囲に設定
+        RECT taskbarRect;
+        HWND taskbarHwnd = FindWindow(L"Shell_TrayWnd", nullptr);
+        int taskbarDetectionStart = m_fixedTaskbarTop - 80; // 固定タスクバー位置より80px上から検出（適切な範囲）
+        
+        if (taskbarHwnd && GetWindowRect(taskbarHwnd, &taskbarRect)) {
+            // 実際のタスクバー位置より80px上から検出（タスクバー周辺のみ）
+            taskbarDetectionStart = std::min((int)taskbarRect.top - 80, m_fixedTaskbarTop - 80);
+        }
+
+        mouseInTaskbar = (globalPos.x() >= screenGeometry.left() && 
+                         globalPos.x() <= screenGeometry.right() &&
+                         globalPos.y() >= taskbarDetectionStart);
+        
+        // デバッグ用：マウス位置の詳細情報（一時的に頻繁に出力）
+        static int debugCounter = 0;
+        if (debugCounter++ % 5 == 0) {  // 5回に1回ログ出力（問題特定のため）
+            LOG_INFO(QString("🖱️ DEBUG: Mouse at %1,%2, TaskbarStart>=%3, InTaskbar=%4, InTaskBarEx=%5, Screen=%6x%7")
+                     .arg(globalPos.x()).arg(globalPos.y())
+                     .arg(taskbarDetectionStart).arg(mouseInTaskbar).arg(mouseInTaskBarEx)
+                     .arg(screenGeometry.width()).arg(screenGeometry.height()));
+        }
+    }
+    
+    bool newMouseOverState = mouseInTaskBarEx || mouseInTaskbar;
+    
+    if (newMouseOverState != m_isMouseOver) {
+        m_isMouseOver = newMouseOverState;
+        QString location = mouseInTaskBarEx ? "TaskBarEx" : (mouseInTaskbar ? "Taskbar-Bottom" : "Away");
+        LOG_INFO(QString("🖱️ MOUSE STATE CHANGED: %1 (location: %2)")
+                 .arg(m_isMouseOver ? "OVER" : "AWAY").arg(location));
+        updateVisibilityBasedOnState();
+    }
+}
+
+void TaskbarWindow::updateVisibilityBasedOnState()
+{
+    bool taskbarVisible = m_visibilityMonitor->isTaskbarVisible();
+    
+    LOG_INFO(QString("🔄 STATE CHECK: Taskbar=%1, MouseOver=%2 (isVisible=%3)")
+             .arg(taskbarVisible ? "visible" : "hidden")
+             .arg(m_isMouseOver ? "yes" : "no")
+             .arg(isVisible() ? "yes" : "no"));
+    
+    // タスクバーの表示状態に関係なく、マウスがタスクバー領域またはTaskBarEx上にあれば表示
+    if (m_isMouseOver) {
+        if (!isVisible()) {
+            // 非表示状態から表示する時
+            LOG_INFO(QString("🟢 SHOWING TaskBarEx (taskbar %1 + mouse over)")
+                     .arg(taskbarVisible ? "visible" : "hidden"));
+            show();
+            raise();
+        } else {
+            // 既に表示中の場合
+            LOG_INFO(QString("✅ TaskBarEx already visible (taskbar %1 + mouse over)")
+                     .arg(taskbarVisible ? "visible" : "hidden"));
+        }
+        
+        // デバッグ用：show後の詳細位置確認
+        QTimer::singleShot(50, this, [this]() {
+            QRect currentGeometry = geometry();
+            LOG_INFO(QString("🔍 Position after show(): %1,%2 %3x%4")
+                     .arg(currentGeometry.x()).arg(currentGeometry.y())
+                     .arg(currentGeometry.width()).arg(currentGeometry.height()));
+            
+            // Windows API位置も確認
+            HWND hwnd = reinterpret_cast<HWND>(winId());
+            if (hwnd) {
+                RECT winRect;
+                if (GetWindowRect(hwnd, &winRect)) {
+                    LOG_INFO(QString("🔍 WINDOWS API after show: left=%1, top=%2, right=%3, bottom=%4")
+                             .arg(winRect.left).arg(winRect.top)
+                             .arg(winRect.right).arg(winRect.bottom));
+                }
+                
+                // ウィンドウスタイルも確認
+                DWORD style = GetWindowLong(hwnd, GWL_STYLE);
+                DWORD exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+                LOG_INFO(QString("🔍 Window styles: style=0x%1, exStyle=0x%2")
+                         .arg(style, 0, 16).arg(exStyle, 0, 16));
+            }
+        });
+    } else {
+        if (isVisible()) {
+            // 表示状態から非表示にする時
+            LOG_INFO(QString("🔴 HIDING TaskBarEx (taskbar %1 + mouse away)")
+                     .arg(taskbarVisible ? "visible" : "hidden"));
+            hide();
+        } else {
+            // 既に非表示の場合
+            LOG_INFO(QString("⚫ TaskBarEx already hidden (taskbar %1 + mouse away)")
+                     .arg(taskbarVisible ? "visible" : "hidden"));
+        }
     }
 }

@@ -20,7 +20,7 @@ public:
     const QVector<WindowInfo>& getVisibleWindows() const;
     
     bool activateWindow(HWND hwnd);
-    QPixmap getWindowIcon(HWND hwnd);
+    QPixmap getWindowIcon(HWND hwnd, bool safeMode = false);
     QString getWindowTitle(HWND hwnd);
     
 signals:

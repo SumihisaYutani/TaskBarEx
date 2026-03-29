@@ -129,12 +129,23 @@ void TaskbarModel::addWindow(HWND hwnd)
         // info.icon = getWindowIcon(hwnd);  // これが最も重い処理
         // info.appUserModelId = getAppUserModelId(hwnd);
         
-        // 軽量な処理のみ実行
-        info.executablePath = ""; // 空文字列
-        info.icon = QPixmap(); // 空のアイコン
-        info.appUserModelId = "";
+        // 段階的にアイコン処理を復旧（安全モード）
+        info.executablePath = ""; // パス取得は一旦無効化
+        info.appUserModelId = ""; // AppUserModelId取得は一旦無効化
         
-        LOG_DEBUG(QString("Window processed (lightweight mode): %1").arg(info.title));
+        // アイコン取得を安全に試行
+        try {
+            info.icon = getWindowIcon(hwnd, true); // 安全モードでアイコン取得
+            if (!info.icon.isNull()) {
+                LOG_DEBUG(QString("Window processed (with safe icon): %1").arg(info.title));
+            } else {
+                LOG_DEBUG(QString("Window processed (no icon): %1").arg(info.title));
+            }
+        } catch (...) {
+            LOG_WARNING(QString("Icon extraction failed for: %1").arg(info.title));
+            info.icon = QPixmap(); // 空のアイコン
+            LOG_DEBUG(QString("Window processed (icon failed, fallback): %1").arg(info.title));
+        }
         
         m_windows.append(info);
         
@@ -211,8 +222,17 @@ bool TaskbarModel::activateWindow(HWND hwnd)
     return true;
 }
 
-QPixmap TaskbarModel::getWindowIcon(HWND hwnd)
+QPixmap TaskbarModel::getWindowIcon(HWND hwnd, bool safeMode)
 {
+    // 安全モードの場合は、アイコン取得を完全にスキップ
+    if (safeMode) {
+        LOG_DEBUG("Safe mode: skipping icon extraction");
+        return QPixmap(); // 空のPixmapを返す
+    }
+    
+    // 通常モード：アイコン取得を実行
+    LOG_DEBUG("Normal mode: attempting icon extraction");
+    
     // まずウィンドウから直接アイコンを取得
     HICON hIcon = reinterpret_cast<HICON>(SendMessage(hwnd, WM_GETICON, ICON_BIG, 0));
     if (!hIcon) {

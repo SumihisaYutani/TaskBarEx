@@ -42,18 +42,8 @@ int main(int argc, char *argv[])
         window = new TaskbarWindow();
         LOG_INFO("TaskbarWindow created successfully");
         
-        window->show();
-        LOG_INFO("TaskbarWindow shown");
-        
-        // 強制前面表示
-        HWND hwnd = (HWND)window->winId();
-        if (hwnd) {
-            ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
-            BringWindowToTop(hwnd);
-            SetWindowPos(hwnd, HWND_TOPMOST, 400, 300, 0, 0, SWP_NOSIZE);
-            LOG_INFO("TaskbarWindow forced to foreground");
-        }
+        // TaskbarWindowは内部ロジックに基づいて自動的に表示/非表示を制御
+        // ここでは強制的にshow()やフォーカス操作を行わない
         
         LOG_INFO("Starting TaskbarWindow event loop...");
         
