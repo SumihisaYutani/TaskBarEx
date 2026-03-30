@@ -112,7 +112,9 @@ TaskbarViewer/
 - [x] DLL依存関係解決
 - [x] Qt6プラットフォームプラグイン対応
 - [x] 安全なHICON→QPixmap変換実装
-- [x] タスクバー自動表示・非表示連動機能
+- [x] **新マウス座標ベース表示制御実装**
+- [x] アプリバー表示領域修正
+- [x] 循環参照問題解決
 - [x] テスト・デバッグ完了
 
 ### 解決済み問題
@@ -122,6 +124,72 @@ TaskbarViewer/
 - ✅ ウィンドウ表示問題
 - ✅ アイコン表示の四角表示問題
 - ✅ ターミナル窓表示問題
+- ✅ TaskBarEx出しっぱなし問題（循環参照）
+- ✅ **複雑なタスクバー連動ロジックの問題（廃止）**
+- ✅ **アプリバー表示領域の見切れ問題**
+- ✅ **表示維持範囲の問題**
+
+## 最終実装された動作仕様
+
+### 新マウス座標ベース表示制御
+
+#### 基本動作原理
+- **マウスY座標 >= 1070（画面下端から10px以内）** → TaskBarEx即座表示
+- **マウスY座標 984-1070（表示維持範囲）** → TaskBarEx表示継続
+- **マウスY座標 < 984（アプリバー上端より上）** → TaskBarEx即座非表示
+
+#### 詳細動作仕様
+- **画面高さ**: 1080ピクセル
+- **表示閾値**: Y=1070（画面下端から10px以内で表示トリガー）
+- **非表示閾値**: Y=984（アプリバー上端で非表示トリガー）
+- **アプリバー位置**: Y=984～1032（48px高さ）
+- **表示維持範囲**: Y=984～1070（86px幅）
+- **チェック間隔**: 50ms（高精度マウストラッキング）
+
+#### 実装された主要変更
+
+**1. タスクバー連動機能の完全削除**
+```cpp
+// 削除された機能:
+// - TaskbarVisibilityMonitor
+// - Windows フォーカスフック
+// - 複雑な状態遷移ベース判定
+// - 表示ディレイタイマー
+```
+
+**2. シンプルなマウス座標ベース表示制御**
+```cpp
+void TaskbarWindow::checkMousePosition()
+{
+    QPoint globalPos = QCursor::pos();
+    int mouseY = globalPos.y();
+    
+    // 表示判定：画面下端付近
+    int showThreshold = m_screenHeight - 10;
+    bool shouldShow = (mouseY >= showThreshold);
+    
+    // 非表示判定：アプリバー上端より上
+    int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
+    bool shouldHide = (mouseY < hideThreshold);
+    
+    // 表示制御
+    if (shouldShow && !isVisible()) {
+        show();
+    } else if (shouldHide && isVisible()) {
+        hide();
+    }
+}
+```
+
+**3. アプリバー表示領域の修正**
+```cpp
+// メニューバー・ステータスバーの完全無効化
+menuBar()->setVisible(false);
+statusBar()->setVisible(false);
+
+// centralwidgetのマージン最小化
+centralWidget()->layout()->setContentsMargins(0, 0, 0, 0);
+```
 
 ## 開発コマンド
 
@@ -164,6 +232,45 @@ ls -lt build/log/ | head -3
 - **Qt6 DLL不足エラー**: CMakeLists.txtで自動DLLコピーを実装済み
 - **プラットフォームプラグイン不足**: platforms/qwindows.dll自動コピー済み
 - **Qt Creatorでの実行**: 上記ビルド手順でDLL依存関係解決済み
+
+#### TaskBarEx特有のトラブルシューティング
+
+**1. TaskBarExが出しっぱなしになる**
+- **原因**: 循環参照（TaskBarExがフォーカスを取ってタスクバー隠しを阻害）
+- **解決済み**: Qt::WA_ShowWithoutActivating属性で解決
+
+**2. タスクバーが隠れているのに検出されない**
+- **原因**: 位置検出の閾値設定ミス（screenHeight + 40 vs 実際の隠し位置）
+- **解決済み**: `taskbarRect.top < screenHeight - 60` で適切な検出
+
+**3. マウス範囲外でも表示され続ける**
+- **原因**: タスクバー表示中の既表示状態で無条件に表示維持
+- **解決済み**: マウス範囲外では即座非表示に修正
+
+**4. 操作時にTaskBarExが邪魔になる**
+- **原因**: 表示にディレイがあるが非表示が即座
+- **解決済み**: 非表示のみにディレイ適用で操作妨害を防止
+
+#### 動作確認方法
+
+1. **基本動作テスト**
+   ```bash
+   ./build/TaskBarEx.exe
+   # タスクバー自動隠し機能を有効にして以下を確認：
+   # - マウス → タスクバー範囲 → TaskBarEx表示
+   # - マウス → 範囲外 → TaskBarEx即座非表示
+   # - タスクバー隠し → TaskBarEx 300ms後非表示
+   ```
+
+2. **ログ確認**
+   ```bash
+   tail -f build/log/TaskBarEx_*.log
+   # 以下のログパターンを確認：
+   # 🚀 TASKBAR APPEARED - マウスオーバーのため即座に表示
+   # 🔴 HIDING TaskBarEx (taskbar visible but mouse away)
+   # ⏱️ TASKBAR HIDDEN - starting hide delay timer
+   # 🔴 HIDE CONFIRMED: TaskBarExを非表示
+   ```
 
 ## Claude Code 対話設定
 
