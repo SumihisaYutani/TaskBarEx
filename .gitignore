@@ -72,3 +72,6 @@ Desktop.ini
 # User settings
 config.ini
 settings.ini
+
+# Claude Code settings
+.claude/settings.local.json
