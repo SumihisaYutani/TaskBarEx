@@ -25,6 +25,7 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_model(new TaskbarModel(this))
     , m_groupManager(new TaskbarGroupManager(this))
     , m_mouseTrackTimer(new QTimer(this))
+    , m_hideDelayTimer(new QTimer(this))  // 非表示ディレイタイマー初期化
     , m_screenHeight(0)
     , m_taskbarHeight(48)  // 標準タスクバー高さ
     , m_appBarHeight(48)   // アプリバー高さ
@@ -172,14 +173,12 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
         LOG_ERROR("Step 5 (positionAboveTaskbar) failed");
     }
     
-    // フォーカス監視は削除済み
-    
     try {
-        LOG_INFO("Step 7: Setting up mouse tracking...");
+        LOG_INFO("Step 6: Setting up mouse tracking...");
         setupMouseTracking();
-        LOG_INFO("Step 7 completed (mouse tracking)");
+        LOG_INFO("Step 6 completed (mouse tracking)");
     } catch (...) {
-        LOG_ERROR("Step 7 (setupMouseTracking) failed");
+        LOG_ERROR("Step 6 (setupMouseTracking) failed");
     }
     
     try {
@@ -432,19 +431,20 @@ void TaskbarWindow::createTaskbarButton(const WindowInfo& window)
             LOG_INFO(QString("Valid icon detected - size: %1x%2").arg(window.icon.width()).arg(window.icon.height()));
             QIcon icon(window.icon);
             button->setIcon(icon);
-            button->setIconSize(QSize(32, 32));  // 安全なアイコンサイズ
+            button->setIconSize(QSize(40, 40));  // タスクバー風のアイコンサイズ
             button->setText(""); // テキストをクリア
             LOG_INFO("Button with icon created successfully");
         } catch (...) {
             // アイコン設定でエラーが発生した場合はテキスト表示にフォールバック
             LOG_WARNING("Icon setting failed, falling back to text");
-            QString displayText = window.title.isEmpty() ? "?" : window.title.left(2).toUpper();
+            QString displayText = window.title.isEmpty() ? "APP" : window.title.left(3).toUpper();
             button->setText(displayText);
         }
     } else {
-        // アイコンが無効な場合はテキスト表示
-        QString displayText = window.title.isEmpty() ? "?" : window.title.left(2).toUpper();
+        // アイコンが無効な場合はテキスト表示（アプリ名の最初の3文字）
+        QString displayText = window.title.isEmpty() ? "APP" : window.title.left(3).toUpper();
         button->setText(displayText);
+        button->setStyleSheet(button->styleSheet() + "QPushButton { font-size: 10px; font-weight: bold; }");
         LOG_INFO(QString("Button created with text: '%1' for window: %2").arg(displayText).arg(window.title));
     }
     
@@ -563,13 +563,32 @@ void TaskbarWindow::setupMouseTracking()
 {
     LOG_INFO("マウス座標ベース表示制御を開始...");
     
+    // 画面情報をログ出力
+    LOG_INFO(QString("画面高さ: %1, タスクバー高さ: %2, アプリバー高さ: %3")
+             .arg(m_screenHeight).arg(m_taskbarHeight).arg(m_appBarHeight));
+    
     // マウス位置チェックタイマー設定
     m_mouseTrackTimer->setInterval(50); // 50ms間隔でチェック
     connect(m_mouseTrackTimer, &QTimer::timeout, this, &TaskbarWindow::checkMousePosition);
     m_mouseTrackTimer->start();
+    LOG_INFO("🕒 マウストラッキングタイマー開始（50ms間隔）");
+    
+    // 非表示ディレイタイマー設定
+    m_hideDelayTimer->setSingleShot(true); // 一回のみ実行
+    m_hideDelayTimer->setInterval(500); // 0.5秒ディレイ
+    connect(m_hideDelayTimer, &QTimer::timeout, this, [this]() {
+        LOG_INFO("⏱️ 非表示ディレイ完了 - TaskBarExを非表示");
+        hide();
+    });
+    LOG_INFO("⏱️ 非表示ディレイタイマー設定完了（0.5秒ディレイ）");
+    
+    // 初期マウス位置をチェック
+    QPoint initialPos = QCursor::pos();
+    LOG_INFO(QString("🖱️ 初期マウス位置: %1,%2").arg(initialPos.x()).arg(initialPos.y()));
     
     // 初期状態は非表示
     hide();
+    LOG_INFO("👻 初期状態：ウィンドウを非表示に設定");
     
     LOG_INFO("✅ マウス座標ベース表示制御を設定完了");
 }
@@ -589,6 +608,13 @@ void TaskbarWindow::leaveEvent(QEvent *event)
 // 新しいマウス座標ベース表示制御
 void TaskbarWindow::checkMousePosition()
 {
+    // タイマー動作の確認（最初の数回のみログ出力）
+    static int timerCounter = 0;
+    timerCounter++;
+    if (timerCounter <= 5) {
+        LOG_INFO(QString("⏰ checkMousePosition() 呼び出し回数: %1").arg(timerCounter));
+    }
+    
     // グローバルマウス位置を取得
     QPoint globalPos = QCursor::pos();
     int mouseY = globalPos.y();
@@ -612,11 +638,23 @@ void TaskbarWindow::checkMousePosition()
     
     // 表示制御
     if (shouldShow && !isVisible()) {
+        // 非表示ディレイタイマーが動作中なら停止
+        if (m_hideDelayTimer->isActive()) {
+            m_hideDelayTimer->stop();
+            LOG_INFO("⏹️ 非表示ディレイタイマー停止（マウスが表示範囲に戻りました）");
+        }
         LOG_INFO(QString("🚀 SHOW: マウスが画面下端に到達 (Y=%1 >= %2)").arg(mouseY).arg(showThreshold));
         show();
     } else if (shouldHide && isVisible()) {
-        LOG_INFO(QString("🔴 HIDE: マウスが閾値より上に移動 (Y=%1 < %2)").arg(mouseY).arg(hideThreshold));
-        hide();
+        // 非表示ディレイタイマーがまだ動作していない場合のみ開始
+        if (!m_hideDelayTimer->isActive()) {
+            LOG_INFO(QString("⏱️ HIDE DELAY START: マウスが閾値より上に移動、0.5秒後に非表示 (Y=%1 < %2)").arg(mouseY).arg(hideThreshold));
+            m_hideDelayTimer->start();
+        }
+    } else if (!shouldHide && isVisible() && m_hideDelayTimer->isActive()) {
+        // マウスが非表示範囲から戻った場合、ディレイタイマーを停止
+        m_hideDelayTimer->stop();
+        LOG_INFO(QString("⏹️ HIDE DELAY CANCELED: マウスが表示範囲に戻りました (Y=%1)").arg(mouseY));
     }
 }
 

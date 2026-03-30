@@ -61,6 +61,7 @@ private:
     
     // マウス座標ベース表示制御
     QTimer *m_mouseTrackTimer;
+    QTimer *m_hideDelayTimer;  // 非表示ディレイ用タイマー
     int m_screenHeight;
     int m_taskbarHeight;
     int m_appBarHeight;

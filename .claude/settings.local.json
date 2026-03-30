@@ -38,7 +38,10 @@
       "Bash(dir /s /b src*.cpp src*.h include*.h)",
       "Bash(timeout 25 ./build/TaskBarEx.exe)",
       "Bash(timeout 45 ./build/TaskBarEx.exe)",
-      "Bash(iconv --help)"
+      "Bash(iconv --help)",
+      "Bash(git add CLAUDE.md README.md include/TaskbarWindow.h src/TaskbarWindow.cpp)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nImplement mouse coordinate-based display control\n\n- Replace complex taskbar visibility monitoring with simple mouse coordinate-based logic\n- Remove TaskbarVisibilityMonitor, Windows focus hooks, and state transition logic\n- Add simple mouse position checking (Y >= 1070 show, Y < 984 hide)\n- Fix app bar display area issues (ScrollArea height 21px -> 48px)\n- Remove menu bar and status bar completely for proper layout\n- Set display trigger at Y=1070 (10px from screen bottom)\n- Set hide trigger at Y=984 (app bar top edge)\n- Update documentation with new coordinate-based control specifications\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(sed -n '1266,1275p' build/log/TaskBarEx_2026-03-30_09-49-51.log)"
     ],
     "deny": [],
     "ask": []

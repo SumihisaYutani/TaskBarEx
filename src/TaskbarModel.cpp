@@ -114,7 +114,16 @@ void TaskbarModel::addWindow(HWND hwnd)
             info.title == "Network Flyout" ||
             info.title == "システム トレイ オーバーフロー ウィンドウ。" ||
             info.title == "Windows 入力エクスペリエンス" ||
-            info.title == "進行状況") {
+            info.title == "進行状況" ||
+            // アイコン抽出で問題を起こすウィンドウを一時的に除外
+            info.title.contains("セットアップ") ||
+            info.title.contains("Setup") ||
+            info.title.contains("InnoSetupLdrWindow") ||
+            info.title.contains("Default IME") ||
+            info.title.contains("IME") ||
+            info.title.contains("入力") ||
+            info.title.contains("Input")) {
+            LOG_DEBUG(QString("Skipping problematic window: %1").arg(info.title));
             return;
         }
         
@@ -133,16 +142,22 @@ void TaskbarModel::addWindow(HWND hwnd)
         info.executablePath = ""; // パス取得は一旦無効化
         info.appUserModelId = ""; // AppUserModelId取得は一旦無効化
         
-        // アイコン取得を安全に試行
+        // アイコン取得を有効化（強化された例外処理付き）
         try {
-            info.icon = getWindowIcon(hwnd, true); // 安全モードでアイコン取得
+            LOG_DEBUG(QString("Starting icon extraction for: %1").arg(info.title));
+            info.icon = getWindowIcon(hwnd, false); // アイコン取得を有効化
             if (!info.icon.isNull()) {
                 LOG_DEBUG(QString("Window processed (with safe icon): %1").arg(info.title));
             } else {
                 LOG_DEBUG(QString("Window processed (no icon): %1").arg(info.title));
             }
+            LOG_DEBUG(QString("Icon extraction completed for: %1").arg(info.title));
+        } catch (const std::exception& e) {
+            LOG_WARNING(QString("Icon extraction exception for %1: %2").arg(info.title).arg(e.what()));
+            info.icon = QPixmap(); // 空のアイコン
+            LOG_DEBUG(QString("Window processed (icon failed, fallback): %1").arg(info.title));
         } catch (...) {
-            LOG_WARNING(QString("Icon extraction failed for: %1").arg(info.title));
+            LOG_WARNING(QString("Icon extraction failed for: %1 (unknown exception)").arg(info.title));
             info.icon = QPixmap(); // 空のアイコン
             LOG_DEBUG(QString("Window processed (icon failed, fallback): %1").arg(info.title));
         }
