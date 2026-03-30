@@ -42,7 +42,28 @@ void TaskbarModel::updateWindowList()
         LOG_INFO(QString("Filtering window %1/%2: %3").arg(filterCount).arg(m_windows.size()).arg(window.title));
         
         try {
-            if (isValidTaskbarWindow(window.hwnd)) {
+            bool isMTGA = window.title.contains("MTGA", Qt::CaseInsensitive);
+            bool isBrownDust = window.title.contains("BrownDust", Qt::CaseInsensitive);
+            
+            if (isMTGA) {
+                LOG_INFO(QString("🎯 MTGAフィルター呼び出し開始: %1").arg(window.title));
+            }
+            
+            if (isBrownDust) {
+                LOG_INFO(QString("🎯 BrownDustフィルター呼び出し開始: %1").arg(window.title));
+            }
+            
+            bool filterResult = isValidTaskbarWindow(window.hwnd);
+            
+            if (isMTGA) {
+                LOG_INFO(QString("🎯 MTGAフィルター結果: %1").arg(filterResult ? "PASS" : "FAIL"));
+            }
+            
+            if (isBrownDust) {
+                LOG_INFO(QString("🎯 BrownDustフィルター結果: %1").arg(filterResult ? "PASS" : "FAIL"));
+            }
+            
+            if (filterResult) {
                 m_visibleWindows.append(window);
                 LOG_INFO(QString("Window passed filter: %1").arg(window.title));
             } else {
@@ -176,28 +197,163 @@ void TaskbarModel::addWindow(HWND hwnd)
 
 bool TaskbarModel::isValidTaskbarWindow(HWND hwnd)
 {
+    wchar_t title[256];
+    GetWindowTextW(hwnd, title, sizeof(title) / sizeof(wchar_t));
+    QString windowTitle = QString::fromWCharArray(title);
+    
+    // アプリケーション詳細デバッグ
+    bool isVSCode = windowTitle.contains("Visual Studio Code", Qt::CaseInsensitive);
+    bool isMTGA = windowTitle.contains("MTGA", Qt::CaseInsensitive);
+    bool isBrownDust = windowTitle.contains("BrownDust", Qt::CaseInsensitive);
+    
+    if (isVSCode) {
+        LOG_INFO(QString("🔍 VS Code詳細チェック開始: %1").arg(windowTitle));
+    }
+    
+    if (isMTGA) {
+        LOG_INFO(QString("🃏 MTGA詳細チェック開始: %1").arg(windowTitle));
+    }
+    
+    if (isBrownDust) {
+        LOG_INFO(QString("🎮 BrownDust詳細チェック開始: %1").arg(windowTitle));
+    }
+    
     // 基本的な条件チェック
-    if (!isWindowVisible(hwnd) || !hasWindowTitle(hwnd)) {
+    bool visible = isWindowVisible(hwnd);
+    bool hasTitle = hasWindowTitle(hwnd);
+    
+    if (isMTGA) {
+        LOG_INFO(QString("🔍 MTGA基本条件: visible=%1, hasTitle=%2").arg(visible).arg(hasTitle));
+    }
+    
+    if (isBrownDust) {
+        LOG_INFO(QString("🔍 BrownDust基本条件: visible=%1, hasTitle=%2").arg(visible).arg(hasTitle));
+    }
+    if (!visible || !hasTitle) {
+        if (isVSCode) {
+            LOG_INFO(QString("❌ VS Code基本チェック失敗: visible=%1, hasTitle=%2").arg(visible).arg(hasTitle));
+        }
+        if (isMTGA) {
+            LOG_INFO(QString("❌ MTGA基本チェック失敗: visible=%1, hasTitle=%2").arg(visible).arg(hasTitle));
+        }
+        if (isBrownDust) {
+            LOG_INFO(QString("❌ BrownDust基本チェック失敗: visible=%1, hasTitle=%2").arg(visible).arg(hasTitle));
+        }
         return false;
     }
     
     // ツールウィンドウは除外
-    if (!isNotToolWindow(hwnd)) {
+    bool notToolWindow = isNotToolWindow(hwnd);
+    
+    if (isMTGA) {
+        LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        LOG_INFO(QString("🔍 MTGAツールウィンドウチェック: notToolWindow=%1, ExStyle=0x%2")
+                 .arg(notToolWindow).arg(exStyle, 0, 16));
+    }
+    
+    if (isBrownDust) {
+        LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        LOG_INFO(QString("🔍 BrownDustツールウィンドウチェック: notToolWindow=%1, ExStyle=0x%2")
+                 .arg(notToolWindow).arg(exStyle, 0, 16));
+    }
+    
+    if (!notToolWindow) {
+        if (isVSCode) {
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            LOG_INFO(QString("❌ VS CodeはツールウィンドウでNGExStyle=0x%1 (WS_EX_TOOLWINDOW=%2)")
+                     .arg(exStyle, 0, 16).arg((exStyle & WS_EX_TOOLWINDOW) ? "true" : "false"));
+        }
+        if (isMTGA) {
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            LOG_INFO(QString("❌ MTGAはツールウィンドウでNG ExStyle=0x%1 (WS_EX_TOOLWINDOW=%2)")
+                     .arg(exStyle, 0, 16).arg((exStyle & WS_EX_TOOLWINDOW) ? "true" : "false"));
+        }
+        if (isBrownDust) {
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            LOG_INFO(QString("❌ BrownDustはツールウィンドウでNG ExStyle=0x%1 (WS_EX_TOOLWINDOW=%2)")
+                     .arg(exStyle, 0, 16).arg((exStyle & WS_EX_TOOLWINDOW) ? "true" : "false"));
+        }
         return false;
     }
     
     // 親ウィンドウがある場合（子ウィンドウ）は除外
     HWND parent = GetParent(hwnd);
+    
+    if (isMTGA) {
+        LOG_INFO(QString("🔍 MTGA親ウィンドウチェック: parent=0x%1").arg(reinterpret_cast<quintptr>(parent), 0, 16));
+    }
+    
+    if (isBrownDust) {
+        LOG_INFO(QString("🔍 BrownDust親ウィンドウチェック: parent=0x%1").arg(reinterpret_cast<quintptr>(parent), 0, 16));
+    }
+    
     if (parent != nullptr) {
+        if (isVSCode) {
+            LOG_INFO(QString("❌ VS Codeは子ウィンドウでNG parent=0x%1").arg(reinterpret_cast<quintptr>(parent), 0, 16));
+        }
+        if (isMTGA) {
+            LOG_INFO(QString("❌ MTGAは子ウィンドウでNG parent=0x%1").arg(reinterpret_cast<quintptr>(parent), 0, 16));
+        }
+        if (isBrownDust) {
+            LOG_INFO(QString("❌ BrownDustは子ウィンドウでNG parent=0x%1").arg(reinterpret_cast<quintptr>(parent), 0, 16));
+        }
         return false;
     }
     
     // ウィンドウスタイルをチェック
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     
-    // 最小化ボタンやシステムメニューがないウィンドウは除外
-    if (!(style & WS_SYSMENU)) {
+    // WS_SYSMENUチェックを緩和（VS Code等のモダンアプリは持たない場合がある）
+    // 代わりに最小化・最大化ボタンの存在をチェック
+    bool hasMinMaxButtons = (style & WS_MINIMIZEBOX) || (style & WS_MAXIMIZEBOX);
+    bool hasSysMenu = (style & WS_SYSMENU);
+    
+    // システムメニューまたは最小化/最大化ボタンのいずれかがあればOK
+    // ただし、ゲームアプリケーション（style=-0x6c000000）の場合は例外とする
+    bool isGameStyle = (style == -0x6c000000);
+    
+    if (!hasSysMenu && !hasMinMaxButtons && !isGameStyle) {
+        if (isVSCode) {
+            LOG_INFO(QString("❌ VS Codeはシステムメニューも最小化/最大化ボタンもなしでNG style=0x%1").arg(style, 0, 16));
+        }
+        if (isMTGA) {
+            LOG_INFO(QString("❌ MTGAはシステムメニューも最小化/最大化ボタンもなしでNG style=0x%1").arg(style, 0, 16));
+        }
+        if (isBrownDust) {
+            LOG_INFO(QString("❌ BrownDustはシステムメニューも最小化/最大化ボタンもなしでNG style=0x%1").arg(style, 0, 16));
+        }
         return false;
+    }
+    
+    if (isGameStyle) {
+        LOG_INFO(QString("🎮 ゲームアプリケーションスタイル検出 - フィルター通過許可: %1").arg(windowTitle));
+    }
+    
+    if (isVSCode) {
+        LOG_INFO(QString("ℹ️ VS Code ウィンドウスタイル: sysMenu=%1, minMax=%2, style=0x%3")
+                 .arg(hasSysMenu).arg(hasMinMaxButtons).arg(style, 0, 16));
+    }
+    
+    if (isMTGA) {
+        LOG_INFO(QString("ℹ️ MTGA ウィンドウスタイル: sysMenu=%1, minMax=%2, style=0x%3")
+                 .arg(hasSysMenu).arg(hasMinMaxButtons).arg(style, 0, 16));
+    }
+    
+    if (isBrownDust) {
+        LOG_INFO(QString("ℹ️ BrownDust ウィンドウスタイル: sysMenu=%1, minMax=%2, style=0x%3")
+                 .arg(hasSysMenu).arg(hasMinMaxButtons).arg(style, 0, 16));
+    }
+    
+    if (isVSCode) {
+        LOG_INFO("✅ VS Code全チェック通過！");
+    }
+    
+    if (isMTGA) {
+        LOG_INFO("✅ MTGA全チェック通過！");
+    }
+    
+    if (isBrownDust) {
+        LOG_INFO("✅ BrownDust全チェック通過！");
     }
     
     return true;
