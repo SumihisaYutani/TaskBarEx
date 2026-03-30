@@ -15,6 +15,9 @@ QT_END_NAMESPACE
 
 class TaskbarModel;
 class TaskbarGroupManager;
+class PinnedAppsManager;
+class QHBoxLayout;
+class QVBoxLayout;
 
 class TaskbarWindow : public QMainWindow
 {
@@ -57,6 +60,7 @@ private:
     
     TaskbarModel *m_model;
     TaskbarGroupManager *m_groupManager;
+    PinnedAppsManager *m_pinnedManager;  // ピン留めアプリ管理
     static TaskbarWindow* s_instance;
     
     // マウス座標ベース表示制御
@@ -65,6 +69,20 @@ private:
     int m_screenHeight;
     int m_taskbarHeight;
     int m_appBarHeight;
+    
+    // 2段表示システム
+    QWidget *m_runningAppsRow;    // 起動中アプリ行
+    QWidget *m_pinnedAppsRow;     // ピン留めアプリ行
+    QHBoxLayout *m_runningLayout; // 起動中アプリレイアウト
+    QHBoxLayout *m_pinnedLayout;  // ピン留めアプリレイアウト
+    
+    // 動的レイアウト管理
+    void updateAppBarHeight();
+    void updateMouseThresholds();
+    void setupTwoRowLayout();
+    void populatePinnedAppsRow();
+    void clearRunningAppButtons();
+    void createRunningAppButton(const WindowInfo& window);
 };
 
 #endif // TASKBARWINDOW_H

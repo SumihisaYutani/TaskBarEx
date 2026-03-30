@@ -287,9 +287,65 @@ ls -lt build/log/ | head -3
 - ログファイルは日時付きで自動生成される
 - デバッグ時は詳細ログを有効活用すること
 
+## 次期実装予定機能
+
+### 2段表示システム（実装予定）
+
+#### 基本仕様
+- **上段**: 起動中アプリケーションのアイコン表示・グループ表示
+- **下段**: タスクバーにピン留めされているアイコンの表示
+
+#### 動的レイアウト調整
+- 各段がアイコン幅いっぱいまで広がると2列表示に変更
+- アイコン数に応じてアプリバーの高さを動的調整
+- マウス表示維持領域もアプリバー高さに連動して拡大
+
+#### 詳細動作仕様（予定）
+```
+段数計算:
+- 1段目: 起動中アプリ（最大アイコン数まで）
+- 2段目: ピン留めアプリ（最大アイコン数まで）
+- 各段が満杯 → 2列表示に移行
+
+アプリバー高さ計算:
+- 基本高さ: 48px（1段1列）
+- 2段1列: 96px（48px × 2）
+- 1段2列: 96px（48px × 2）
+- 2段2列: 192px（48px × 4）
+
+マウス表示維持領域調整:
+- 基本: Y=984～1070（86px幅）
+- 2段時: Y=936～1070（134px幅）
+- 2列時: Y=888～1070（182px幅）
+```
+
+#### 実装要件
+1. **ピン留めアプリ検出**
+   - レジストリからタスクバーピン留め情報取得
+   - `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband`
+
+2. **動的レイアウト管理**
+   - アイコン数カウントによる段・列計算
+   - アプリバー高さリアルタイム調整
+   - マウス座標閾値の動的更新
+
+3. **視覚的区分け**
+   - 上段・下段の視覚的境界線
+   - アクティブ/非アクティブ状態の区別表示
+   - ピン留めアイコンの特別な表示（固定表示）
+
+### 実装優先度
+- [x] **Phase 1**: 基本1段表示（完了）
+- [x] **Phase 2**: マウス座標ベース表示制御（完了）
+- [x] **Phase 3**: 0.5秒非表示ディレイ（完了）
+- [ ] **Phase 4**: 2段表示システム（次期実装）
+- [ ] **Phase 5**: 動的レイアウト調整（次期実装）
+- [ ] **Phase 6**: ピン留めアプリ検出・表示（次期実装）
+
 ## 参考リンク
 
 - [Qx Library](https://github.com/oblivioncth/Qx) - Qt6対応のWindows統合ライブラリ
 - [Windows API EnumWindows](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows)
 - [Windows API SHGetFileInfo](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shgetfileinfoa)
 - [AppUserModelID Documentation](https://learn.microsoft.com/en-us/windows/win32/shell/appids)
+- [Windows Taskbar Pinned Items Registry](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar)

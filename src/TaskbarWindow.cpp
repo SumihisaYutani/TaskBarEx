@@ -2,6 +2,7 @@
 #include "ui_TaskbarWindow.h"
 #include "TaskbarModel.h"
 #include "TaskbarGroupManager.h"
+#include "PinnedAppsManager.h"
 // TaskbarVisibilityMonitor削除済み
 #include "Logger.h"
 #include <QListWidgetItem>
@@ -11,8 +12,10 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QScrollArea>
 #include <QLabel>
+#include <QProcess>
 #include <windows.h>
 
 // 静的メンバーの初期化
@@ -24,11 +27,16 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_updateTimer(new QTimer(this))
     , m_model(new TaskbarModel(this))
     , m_groupManager(new TaskbarGroupManager(this))
+    , m_pinnedManager(new PinnedAppsManager(this))  // ピン留めアプリ管理初期化
     , m_mouseTrackTimer(new QTimer(this))
     , m_hideDelayTimer(new QTimer(this))  // 非表示ディレイタイマー初期化
     , m_screenHeight(0)
     , m_taskbarHeight(48)  // 標準タスクバー高さ
     , m_appBarHeight(48)   // アプリバー高さ
+    , m_runningAppsRow(nullptr)
+    , m_pinnedAppsRow(nullptr)
+    , m_runningLayout(nullptr)
+    , m_pinnedLayout(nullptr)
 {
     LOG_INFO("TaskbarWindow constructor started");
     
@@ -130,6 +138,14 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
         LOG_INFO("Step 2 completed (connections enabled)");
     } catch (...) {
         LOG_ERROR("Step 2 (setupConnections) failed");
+    }
+    
+    try {
+        LOG_INFO("Step 2.5: Setting up two-row layout...");
+        setupTwoRowLayout(); // 2段レイアウト設定
+        LOG_INFO("Step 2.5 completed (two-row layout enabled)");
+    } catch (...) {
+        LOG_ERROR("Step 2.5 (setupTwoRowLayout) failed");
     }
     
     try {
@@ -290,56 +306,28 @@ void TaskbarWindow::updateTaskbarItems()
 
 void TaskbarWindow::populateTaskbarList()
 {
-    LOG_INFO("Starting populateTaskbarList...");
+    LOG_INFO("Starting populateTaskbarList (2段レイアウト対応)...");
     
-    try {
-        // デバッグ用：UIコンポーネントの存在確認
-        LOG_INFO("Step 1: Checking UI components...");
-        if (!ui) {
-            LOG_ERROR("ui is NULL!");
-            return;
-        }
-        LOG_INFO("ui is valid");
-        
-        if (!ui->taskbarScrollArea) {
-            LOG_ERROR("taskbarScrollArea is NULL!");
-            return;
-        }
-        LOG_INFO("taskbarScrollArea is valid");
-        
-        QWidget* scrollWidget = ui->taskbarScrollArea->widget();
-        if (!scrollWidget) {
-            LOG_ERROR("Scroll area widget is NULL!");
-            return;
-        }
-        LOG_INFO("scrollWidget is valid");
-        
-        QLayout* layout = scrollWidget->layout();
-        if (!layout) {
-            LOG_ERROR("Scroll area layout is NULL!");
-            return;
-        }
-        LOG_INFO("layout is valid");
-    } catch (...) {
-        LOG_ERROR("Exception in UI component check");
+    // 2段レイアウトが設定されているかチェック
+    if (!m_runningLayout) {
+        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
         return;
     }
     
-    // レイアウトを再取得（スコープ修正）
-    QWidget* scrollWidget = ui->taskbarScrollArea->widget();
-    QLayout* layout = scrollWidget->layout();
-    
-    LOG_INFO(QString("UI components verified - ScrollArea: %1, Widget: %2, Layout: %3")
-             .arg(ui->taskbarScrollArea ? "OK" : "NULL")
-             .arg(scrollWidget ? "OK" : "NULL") 
-             .arg(layout ? "OK" : "NULL"));
+    try {
+        LOG_INFO("Step 1: 2段レイアウトコンポーネント確認...");
+        LOG_INFO("✅ 起動中アプリレイアウト使用可能");
+    } catch (...) {
+        LOG_ERROR("Exception in 2段レイアウト component check");
+        return;
+    }
     
     try {
-        LOG_INFO("Step 2: Clearing taskbar buttons...");
-        clearTaskbarButtons();
-        LOG_INFO("Taskbar buttons cleared");
+        LOG_INFO("Step 2: 起動中アプリボタンをクリア...");
+        clearRunningAppButtons();
+        LOG_INFO("起動中アプリボタンクリア完了");
     } catch (...) {
-        LOG_ERROR("Exception in clearTaskbarButtons");
+        LOG_ERROR("Exception in clearing running app buttons");
         return;
     }
     
@@ -364,7 +352,7 @@ void TaskbarWindow::populateTaskbarList()
     }
     
     try {
-        LOG_INFO("Step 5: Creating buttons...");
+        LOG_INFO("Step 5: Creating running app buttons (2段レイアウト)...");
         int buttonCount = 0;
         for (int groupIndex = 0; groupIndex < groups.size(); ++groupIndex) {
             const auto& group = groups[groupIndex];
@@ -376,7 +364,7 @@ void TaskbarWindow::populateTaskbarList()
                          .arg(windowInfo.appUserModelId)
                          .arg(windowInfo.executablePath));
                 try {
-                    createTaskbarButton(windowInfo);
+                    createRunningAppButton(windowInfo);
                     buttonCount++;
                     LOG_INFO(QString("    Button created successfully for: %1").arg(windowInfo.title));
                 } catch (...) {
@@ -384,131 +372,43 @@ void TaskbarWindow::populateTaskbarList()
                 }
             }
         }
-        LOG_INFO(QString("Created %1 taskbar buttons").arg(buttonCount));
+        LOG_INFO(QString("Created %1 running app buttons").arg(buttonCount));
+        
+        // 右端にスペーサー追加
+        m_runningLayout->addStretch();
+        
     } catch (...) {
-        LOG_ERROR("Exception in creating buttons");
+        LOG_ERROR("Exception in creating running app buttons");
         return;
     }
     
     // デバッグ用：最終的なレイアウトの状態をチェック
-    LOG_INFO(QString("Final layout state - Item count: %1").arg(layout->count()));
-    LOG_INFO(QString("ScrollArea size: %1x%2, Widget size: %3x%4")
-             .arg(ui->taskbarScrollArea->width()).arg(ui->taskbarScrollArea->height())
-             .arg(scrollWidget->width()).arg(scrollWidget->height()));
+    LOG_INFO(QString("Final 2段レイアウト state - Running apps count: %1").arg(m_runningLayout->count()));
+    LOG_INFO("✅ populateTaskbarList (2段レイアウト対応) 完了");
 }
 
 void TaskbarWindow::clearTaskbarButtons()
 {
-    // 既存のボタンをすべて削除
-    QLayout* layout = ui->taskbarScrollArea->widget()->layout();
-    if (layout) {
-        QLayoutItem* item;
-        while ((item = layout->takeAt(0)) != nullptr) {
-            delete item->widget();
-            delete item;
-        }
-    }
+    // 2段レイアウト用のclearRunningAppButtons()に委譲
+    clearRunningAppButtons();
 }
 
 void TaskbarWindow::createTaskbarButton(const WindowInfo& window)
 {
-    LOG_INFO(QString("Creating button for window: %1").arg(window.title));
-    
-    QPushButton* button = new QPushButton();
-    button->setToolTip(window.title);
-    button->setCheckable(true);
-    button->setChecked(!window.isMinimized);
-    
-    // Windows風タスクバーボタンサイズ設定
-    button->setMinimumSize(44, 44);
-    button->setMaximumSize(44, 44);
-    button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    
-    // アイコンとテキストの混合表示（ハングアップ対策）
-    if (!window.icon.isNull() && window.icon.width() > 0 && window.icon.height() > 0) {
-        try {
-            // アイコンが有効な場合のみ設定
-            LOG_INFO(QString("Valid icon detected - size: %1x%2").arg(window.icon.width()).arg(window.icon.height()));
-            QIcon icon(window.icon);
-            button->setIcon(icon);
-            button->setIconSize(QSize(40, 40));  // タスクバー風のアイコンサイズ
-            button->setText(""); // テキストをクリア
-            LOG_INFO("Button with icon created successfully");
-        } catch (...) {
-            // アイコン設定でエラーが発生した場合はテキスト表示にフォールバック
-            LOG_WARNING("Icon setting failed, falling back to text");
-            QString displayText = window.title.isEmpty() ? "APP" : window.title.left(3).toUpper();
-            button->setText(displayText);
-        }
-    } else {
-        // アイコンが無効な場合はテキスト表示（アプリ名の最初の3文字）
-        QString displayText = window.title.isEmpty() ? "APP" : window.title.left(3).toUpper();
-        button->setText(displayText);
-        button->setStyleSheet(button->styleSheet() + "QPushButton { font-size: 10px; font-weight: bold; }");
-        LOG_INFO(QString("Button created with text: '%1' for window: %2").arg(displayText).arg(window.title));
-    }
-    
-    // Windows風タスクバーボタンスタイル（統一）
-    button->setStyleSheet(
-        "QPushButton {"
-        "    background-color: rgba(255, 255, 255, 10);"
-        "    border: 1px solid rgba(255, 255, 255, 20);"
-        "    border-radius: 4px;"
-        "    margin: 2px;"
-        "    padding: 2px;"
-        "    font-weight: bold;"
-        "    color: white;"
-        "    font-size: 12px;"
-        "}"
-        "QPushButton:hover {"
-        "    background-color: rgba(255, 255, 255, 25);"
-        "    border: 1px solid rgba(255, 255, 255, 40);"
-        "}"
-        "QPushButton:pressed {"
-        "    background-color: rgba(255, 255, 255, 35);"
-        "}"
-        "QPushButton:checked {"
-        "    background-color: rgba(0, 120, 215, 40);"
-        "    border: 1px solid rgba(0, 120, 215, 60);"
-        "}"
-    );
-    
-    // HWNDをボタンに保存
-    button->setProperty("hwnd", reinterpret_cast<qulonglong>(window.hwnd));
-    
-    // クリックイベント接続
-    connect(button, &QPushButton::clicked, this, [this, button]() {
-        HWND hwnd = reinterpret_cast<HWND>(button->property("hwnd").toULongLong());
-        m_model->activateWindow(hwnd);
-    });
-    
-    // レイアウトに追加
-    QHBoxLayout* layout = qobject_cast<QHBoxLayout*>(ui->taskbarScrollArea->widget()->layout());
-    if (layout) {
-        layout->addWidget(button);
-        LOG_INFO(QString("Button added to layout - Layout now has %1 items").arg(layout->count()));
-        
-        // デバッグ用：ボタンが見えるかチェック
-        button->show();
-        LOG_INFO(QString("Button visibility: %1, size: %2x%3, pos: %4,%5")
-                 .arg(button->isVisible() ? "visible" : "hidden")
-                 .arg(button->width()).arg(button->height())
-                 .arg(button->x()).arg(button->y()));
-    } else {
-        LOG_ERROR("Layout not found!");
-    }
-    
-    LOG_INFO("Button creation completed");
+    // 2段レイアウト用のcreateRunningAppButton()に委譲
+    createRunningAppButton(window);
 }
 
 void TaskbarWindow::updateStatusBar()
 {
-    // ステータスバー更新（ボタン数をカウント）
-    QLayout* layout = ui->taskbarScrollArea->widget()->layout();
-    int count = layout ? layout->count() : 0;
+    // 2段レイアウト対応のステータスバー更新
+    int runningCount = m_runningLayout ? m_runningLayout->count() - 1 : 0; // ラベル分を引く
+    int pinnedCount = m_pinnedLayout ? m_pinnedLayout->count() - 1 : 0;   // ラベル分を引く
     
     // ステータス表示を簡素化（タスクバー風に）
-    setWindowTitle(QString("TaskBarEx - %1 apps").arg(count));
+    setWindowTitle(QString("TaskBarEx - %1 apps, %2 pinned").arg(runningCount).arg(pinnedCount));
+    
+    LOG_INFO(QString("📊 ステータス更新: 起動中=%1, ピン留め=%2").arg(runningCount).arg(pinnedCount));
 }
 
 void TaskbarWindow::onItemClicked(QListWidgetItem *item)
@@ -670,4 +570,306 @@ void TaskbarWindow::onShowDelayTimeout()
 void TaskbarWindow::onHideDelayTimeout()
 {
     // 使用しない（互換性維持のためスロットのみ残す）
+}
+
+// ========== 2段表示システム実装 ==========
+
+void TaskbarWindow::setupTwoRowLayout()
+{
+    LOG_INFO("🏗️ 2段レイアウト設定開始");
+    
+    // メインコンテナウィジェット取得
+    QWidget *centralWidget = this->centralWidget();
+    if (!centralWidget) {
+        LOG_ERROR("❌ centralWidget が見つかりません");
+        return;
+    }
+    
+    // 既存のレイアウトを削除（もしあれば）
+    if (centralWidget->layout()) {
+        QLayoutItem *item;
+        while ((item = centralWidget->layout()->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+        delete centralWidget->layout();
+    }
+    
+    // メインの垂直レイアウト作成
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(2, 2, 2, 2);  // 小さなマージン
+    mainLayout->setSpacing(1);  // 段間の境界線用スペース
+    
+    // === 上段: 起動中アプリケーション行 ===
+    m_runningAppsRow = new QWidget();
+    m_runningAppsRow->setFixedHeight(40);  // 1段の高さ
+    m_runningAppsRow->setStyleSheet("background-color: rgba(40, 40, 40, 220); border-radius: 3px;");
+    
+    m_runningLayout = new QHBoxLayout(m_runningAppsRow);
+    m_runningLayout->setContentsMargins(4, 2, 4, 2);
+    m_runningLayout->setSpacing(2);
+    m_runningLayout->setAlignment(Qt::AlignLeft);
+    
+    // ラベル追加（デバッグ用）
+    QLabel *runningLabel = new QLabel("起動中:");
+    runningLabel->setObjectName("runningLabel");  // オブジェクト名設定
+    runningLabel->setStyleSheet("color: white; font-size: 10px; font-weight: bold;");
+    runningLabel->setFixedWidth(45);
+    m_runningLayout->addWidget(runningLabel);
+    
+    // === 下段: ピン留めアプリケーション行 ===
+    m_pinnedAppsRow = new QWidget();
+    m_pinnedAppsRow->setFixedHeight(40);  // 1段の高さ
+    m_pinnedAppsRow->setStyleSheet("background-color: rgba(60, 60, 60, 200); border-radius: 3px;");
+    
+    m_pinnedLayout = new QHBoxLayout(m_pinnedAppsRow);
+    m_pinnedLayout->setContentsMargins(4, 2, 4, 2);
+    m_pinnedLayout->setSpacing(2);
+    m_pinnedLayout->setAlignment(Qt::AlignLeft);
+    
+    // ラベル追加（デバッグ用）
+    QLabel *pinnedLabel = new QLabel("ピン留め:");
+    pinnedLabel->setObjectName("pinnedLabel");  // オブジェクト名設定
+    pinnedLabel->setStyleSheet("color: white; font-size: 10px; font-weight: bold;");
+    pinnedLabel->setFixedWidth(45);
+    m_pinnedLayout->addWidget(pinnedLabel);
+    
+    // メインレイアウトに行を追加
+    mainLayout->addWidget(m_runningAppsRow);
+    mainLayout->addWidget(m_pinnedAppsRow);
+    
+    // 初期のアプリバー高さ更新（2段分）
+    m_appBarHeight = 86;  // 40px × 2 + マージン・境界線
+    setFixedHeight(m_appBarHeight);
+    
+    LOG_INFO(QString("✅ 2段レイアウト設定完了 - 高さ: %1px").arg(m_appBarHeight));
+    
+    // ピン留めアプリマネージャー接続（再有効化）
+    connect(m_pinnedManager, &PinnedAppsManager::pinnedAppsChanged, 
+            this, &TaskbarWindow::populatePinnedAppsRow);
+    
+    // 初期のピン留めアプリ表示（再有効化）
+    populatePinnedAppsRow();
+    
+    // ピン留めアプリの自動更新開始（5秒間隔）
+    m_pinnedManager->startAutoRefresh(5000);
+    LOG_INFO("🔄 ピン留めアプリ自動更新開始（5秒間隔）");
+    
+    // マウス閾値も更新
+    updateMouseThresholds();
+}
+
+void TaskbarWindow::populatePinnedAppsRow()
+{
+    LOG_INFO("📌 ピン留めアプリ行を更新開始");
+    
+    if (!m_pinnedLayout) {
+        LOG_ERROR("❌ ピン留めレイアウトが初期化されていません");
+        return;
+    }
+    
+    // 既存のピン留めアイコンをクリア（ラベル以外）
+    for (int i = m_pinnedLayout->count() - 1; i >= 0; --i) {
+        QLayoutItem *item = m_pinnedLayout->itemAt(i);
+        if (item && item->widget()) {
+            QWidget *widget = item->widget();
+            // ラベル（"ピン留め:"）以外を削除（QPushButton、QLabel等）
+            if (widget->objectName() != "pinnedLabel") {
+                m_pinnedLayout->removeWidget(widget);
+                widget->deleteLater();
+            }
+        } else if (item && !item->widget()) {
+            // スペーサー（QSpacerItem）も削除
+            m_pinnedLayout->removeItem(item);
+            delete item;
+        }
+    }
+    
+    // ピン留めアプリを追加
+    QList<PinnedAppInfo> pinnedApps = m_pinnedManager->getPinnedApps();
+    LOG_INFO(QString("📌 ピン留めアプリ数: %1").arg(pinnedApps.size()));
+    
+    for (const PinnedAppInfo &appInfo : pinnedApps) {
+        if (!appInfo.isValid) {
+            continue;
+        }
+        
+        // ピン留めアプリボタン作成（クリック可能なQPushButton）
+        QPushButton *pinnedButton = new QPushButton();
+        pinnedButton->setFixedSize(36, 36);
+        pinnedButton->setFlat(true);  // フラットボタン
+        pinnedButton->setStyleSheet(
+            "QPushButton {"
+            "    background-color: rgba(80, 80, 80, 150);"
+            "    border-radius: 4px;"
+            "    border: 1px solid rgba(100, 100, 100, 100);"
+            "    color: white;"
+            "    font-size: 10px;"
+            "    font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: rgba(100, 100, 100, 180);"
+            "    border: 1px solid rgba(140, 140, 140, 180);"
+            "}"
+            "QPushButton:pressed {"
+            "    background-color: rgba(0, 120, 215, 180);"
+            "    border: 1px solid rgba(0, 120, 215, 255);"
+            "}"
+        );
+        
+        if (!appInfo.icon.isNull()) {
+            QIcon icon(appInfo.icon);
+            pinnedButton->setIcon(icon);
+            pinnedButton->setIconSize(QSize(32, 32));
+            pinnedButton->setToolTip(appInfo.name);
+        } else {
+            // アイコンがない場合はテキスト表示
+            pinnedButton->setText(appInfo.name.left(2).toUpper());
+            pinnedButton->setToolTip(appInfo.name);
+        }
+        
+        // 実行可能ファイルパスを保存してクリックイベント設定
+        pinnedButton->setProperty("executablePath", appInfo.executablePath);
+        connect(pinnedButton, &QPushButton::clicked, this, [this, pinnedButton]() {
+            QString execPath = pinnedButton->property("executablePath").toString();
+            if (!execPath.isEmpty()) {
+                // 実行可能ファイルを起動
+                QProcess::startDetached(execPath);
+                LOG_INFO(QString("📌 ピン留めアプリを起動: %1").arg(execPath));
+            }
+        });
+        
+        m_pinnedLayout->addWidget(pinnedButton);
+        
+        LOG_INFO(QString("📌 ピン留めアイコン追加: %1").arg(appInfo.name));
+    }
+    
+    // 右端にスペーサー追加
+    m_pinnedLayout->addStretch();
+    
+    LOG_INFO("✅ ピン留めアプリ行更新完了");
+}
+
+void TaskbarWindow::updateAppBarHeight()
+{
+    // 動的な高さ計算（今後の拡張用）
+    int newHeight = 86;  // 基本の2段高さ
+    
+    // TODO: アイコン数に応じて2列表示時の高さ計算を追加
+    
+    if (newHeight != m_appBarHeight) {
+        m_appBarHeight = newHeight;
+        setFixedHeight(m_appBarHeight);
+        updateMouseThresholds();
+        
+        LOG_INFO(QString("📏 アプリバー高さ更新: %1px").arg(m_appBarHeight));
+    }
+}
+
+void TaskbarWindow::updateMouseThresholds()
+{
+    // マウス座標閾値を動的に更新
+    if (m_screenHeight > 0) {
+        int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
+        int showThreshold = m_screenHeight - 10;
+        
+        LOG_INFO(QString("🖱️ マウス閾値更新 - 表示: Y>=%1, 非表示: Y<%2").arg(showThreshold).arg(hideThreshold));
+    }
+}
+
+// ========== 起動中アプリ管理機能 ==========
+
+void TaskbarWindow::clearRunningAppButtons()
+{
+    if (!m_runningLayout) {
+        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
+        return;
+    }
+    
+    LOG_INFO("🧹 起動中アプリボタンをクリア開始");
+    
+    // 既存のボタンをすべて削除（ラベル以外）
+    for (int i = m_runningLayout->count() - 1; i >= 0; --i) {
+        QLayoutItem *item = m_runningLayout->itemAt(i);
+        if (item && item->widget()) {
+            QWidget *widget = item->widget();
+            // ラベル（"起動中:"）以外を削除（QPushButton、QLabel等）
+            if (widget->objectName() != "runningLabel") {
+                m_runningLayout->removeWidget(widget);
+                widget->deleteLater();
+            }
+        } else if (item && !item->widget()) {
+            // スペーサー（QSpacerItem）も削除
+            m_runningLayout->removeItem(item);
+            delete item;
+        }
+    }
+    
+    LOG_INFO("✅ 起動中アプリボタンクリア完了");
+}
+
+void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
+{
+    if (!m_runningLayout) {
+        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
+        return;
+    }
+    
+    // 起動中アプリボタン作成（クリック可能なQPushButton）
+    QPushButton *appButton = new QPushButton();
+    appButton->setFixedSize(36, 36);
+    appButton->setFlat(true);  // フラットボタン
+    appButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: rgba(40, 40, 40, 180);"
+        "    border-radius: 4px;"
+        "    border: 1px solid rgba(80, 80, 80, 150);"
+        "    color: white;"
+        "    font-size: 10px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: rgba(60, 60, 60, 200);"
+        "    border: 1px solid rgba(120, 120, 120, 180);"
+        "}"
+        "QPushButton:pressed {"
+        "    background-color: rgba(0, 120, 215, 180);"
+        "    border: 1px solid rgba(0, 120, 215, 255);"
+        "}"
+    );
+    
+    // アイコン設定
+    if (!window.icon.isNull()) {
+        QIcon icon(window.icon);
+        appButton->setIcon(icon);
+        appButton->setIconSize(QSize(32, 32));
+        appButton->setToolTip(window.title);
+    } else {
+        // アイコンがない場合はテキスト表示
+        QString displayText = window.title.left(3).toUpper();
+        if (displayText.isEmpty()) {
+            displayText = window.executablePath.split('/').last().left(3).toUpper();
+        }
+        appButton->setText(displayText);
+        appButton->setToolTip(window.title.isEmpty() ? window.executablePath : window.title);
+    }
+    
+    // HWNDをボタンに保存してクリックイベント設定
+    appButton->setProperty("hwnd", reinterpret_cast<qulonglong>(window.hwnd));
+    connect(appButton, &QPushButton::clicked, this, [this, appButton]() {
+        HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
+        if (hwnd) {
+            // ウィンドウをアクティベート
+            if (IsIconic(hwnd)) {
+                ShowWindow(hwnd, SW_RESTORE);  // 最小化されている場合は復元
+            }
+            SetForegroundWindow(hwnd);
+            LOG_INFO("🖱️ ウィンドウをアクティベート");
+        }
+    });
+    
+    // レイアウトに追加
+    m_runningLayout->addWidget(appButton);
+    
+    LOG_INFO(QString("✅ 起動中アプリボタン追加: %1").arg(window.title.isEmpty() ? window.executablePath : window.title));
 }
