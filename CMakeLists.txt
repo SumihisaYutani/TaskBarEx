@@ -32,6 +32,8 @@ set(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TaskbarGroupManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TaskbarVisibilityMonitor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PinnedAppsManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/WindowThumbnailManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ThumbnailPreviewWidget.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Logger.cpp
 )
 
@@ -42,6 +44,8 @@ set(HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/TaskbarGroupManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/TaskbarVisibilityMonitor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/PinnedAppsManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/WindowThumbnailManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/ThumbnailPreviewWidget.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/WindowInfo.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/Logger.h
 )

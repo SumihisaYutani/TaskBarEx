@@ -8,6 +8,8 @@
 #include <QPixmap>
 #include <windows.h>
 #include "WindowInfo.h"
+#include "WindowThumbnailManager.h"
+#include "ThumbnailPreviewWidget.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class TaskbarWindow; }
@@ -16,8 +18,11 @@ QT_END_NAMESPACE
 class TaskbarModel;
 class TaskbarGroupManager;
 class PinnedAppsManager;
+class WindowThumbnailManager;
+class ThumbnailPreviewWidget;
 class QHBoxLayout;
 class QVBoxLayout;
+class QPushButton;
 
 class TaskbarWindow : public QMainWindow
 {
@@ -38,10 +43,15 @@ private slots:
     void onAlwaysOnTopTriggered(bool checked);
     void onAboutTriggered();
     void checkMousePosition();
+    void onButtonHoverEnter(QPushButton* button, const WindowInfo& windowInfo);
+    void onButtonHoverLeave();
+    void onThumbnailDelayTimeout();
+    void onThumbnailClicked(HWND hwnd);
 
 protected:
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void setupConnections();
@@ -61,11 +71,14 @@ private:
     TaskbarModel *m_model;
     TaskbarGroupManager *m_groupManager;
     PinnedAppsManager *m_pinnedManager;  // ピン留めアプリ管理
+    WindowThumbnailManager *m_thumbnailManager;  // サムネイル管理
+    ThumbnailPreviewWidget *m_thumbnailPreview;  // サムネイルプレビュー表示
     static TaskbarWindow* s_instance;
     
     // マウス座標ベース表示制御
     QTimer *m_mouseTrackTimer;
     QTimer *m_hideDelayTimer;  // 非表示ディレイ用タイマー
+    QTimer *m_thumbnailDelayTimer;  // サムネイル表示ディレイ用タイマー
     int m_screenHeight;
     int m_taskbarHeight;
     int m_appBarHeight;
@@ -76,6 +89,10 @@ private:
     QHBoxLayout *m_runningLayout; // 起動中アプリレイアウト
     QHBoxLayout *m_pinnedLayout;  // ピン留めアプリレイアウト
     
+    // サムネイル表示用データ保持
+    QPushButton *m_hoverButton;
+    WindowInfo m_hoverWindowInfo;
+    
     // 動的レイアウト管理
     void updateAppBarHeight();
     void updateMouseThresholds();
@@ -83,6 +100,9 @@ private:
     void populatePinnedAppsRow();
     void clearRunningAppButtons();
     void createRunningAppButton(const WindowInfo& window);
+    
+    // サムネイル関連ヘルパー
+    QString thumbnailToBase64(const QPixmap& pixmap);
 };
 
 #endif // TASKBARWINDOW_H

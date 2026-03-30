@@ -16,7 +16,13 @@
 #include <QScrollArea>
 #include <QLabel>
 #include <QProcess>
+#include <QBuffer>
+#include <QEvent>
+#include <QHoverEvent>
 #include <windows.h>
+
+// WindowInfoをQVariantで使用できるように登録
+Q_DECLARE_METATYPE(WindowInfo)
 
 // 静的メンバーの初期化
 TaskbarWindow* TaskbarWindow::s_instance = nullptr;
@@ -28,8 +34,11 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_model(new TaskbarModel(this))
     , m_groupManager(new TaskbarGroupManager(this))
     , m_pinnedManager(new PinnedAppsManager(this))  // ピン留めアプリ管理初期化
+    , m_thumbnailManager(new WindowThumbnailManager(this))  // サムネイル管理初期化
+    , m_thumbnailPreview(new ThumbnailPreviewWidget(nullptr))  // サムネイルプレビュー初期化
     , m_mouseTrackTimer(new QTimer(this))
     , m_hideDelayTimer(new QTimer(this))  // 非表示ディレイタイマー初期化
+    , m_thumbnailDelayTimer(new QTimer(this))  // サムネイル表示ディレイタイマー初期化
     , m_screenHeight(0)
     , m_taskbarHeight(48)  // 標準タスクバー高さ
     , m_appBarHeight(48)   // アプリバー高さ
@@ -37,6 +46,7 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_pinnedAppsRow(nullptr)
     , m_runningLayout(nullptr)
     , m_pinnedLayout(nullptr)
+    , m_hoverButton(nullptr)
 {
     LOG_INFO("TaskbarWindow constructor started");
     
@@ -284,6 +294,10 @@ void TaskbarWindow::setupConnections()
     connect(ui->actionAbout, &QAction::triggered,
             this, &TaskbarWindow::onAboutTriggered);
     
+    // サムネイルクリック時のフォーカス処理
+    connect(m_thumbnailPreview, &ThumbnailPreviewWidget::thumbnailClicked,
+            this, &TaskbarWindow::onThumbnailClicked);
+    
     // タスクバー監視機能は削除済み
 }
 
@@ -292,6 +306,13 @@ void TaskbarWindow::setupTimer()
     m_updateTimer->setInterval(1000); // 1秒間隔
     connect(m_updateTimer, &QTimer::timeout, 
             this, &TaskbarWindow::updateTaskbarItems);
+            
+    // サムネイル表示ディレイタイマーのセットアップ
+    m_thumbnailDelayTimer->setSingleShot(true);
+    m_thumbnailDelayTimer->setInterval(500);  // 500ms ディレイ
+    connect(m_thumbnailDelayTimer, &QTimer::timeout,
+            this, &TaskbarWindow::onThumbnailDelayTimeout);
+    
     LOG_INFO("Timer setup completed and ready to start");
 }
 
@@ -856,6 +877,16 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     
     // HWNDをボタンに保存してクリックイベント設定
     appButton->setProperty("hwnd", reinterpret_cast<qulonglong>(window.hwnd));
+    
+    // WindowInfoをボタンに保存（ホバーイベント用）
+    appButton->setProperty("windowInfo", QVariant::fromValue(window));
+    
+    // ホバーイベントを有効化
+    appButton->setAttribute(Qt::WA_Hover, true);
+    
+    // イベントフィルターを追加してホバーイベントをキャッチ
+    appButton->installEventFilter(this);
+    
     connect(appButton, &QPushButton::clicked, this, [this, appButton]() {
         HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
         if (hwnd) {
@@ -872,4 +903,117 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     m_runningLayout->addWidget(appButton);
     
     LOG_INFO(QString("✅ 起動中アプリボタン追加: %1").arg(window.title.isEmpty() ? window.executablePath : window.title));
+}
+
+void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& windowInfo)
+{
+    LOG_INFO(QString("🖱️ ボタンホバー開始: %1").arg(windowInfo.title));
+    
+    // ホバー情報を保存してタイマーを開始
+    m_hoverButton = button;
+    m_hoverWindowInfo = windowInfo;
+    
+    // 既存のタイマーをリセット
+    if (m_thumbnailDelayTimer->isActive()) {
+        m_thumbnailDelayTimer->stop();
+    }
+    
+    // 500ms後にサムネイル表示
+    m_thumbnailDelayTimer->start();
+}
+
+void TaskbarWindow::onButtonHoverLeave()
+{
+    LOG_INFO("🖱️ ボタンホバー終了");
+    
+    // ディレイタイマーを停止
+    if (m_thumbnailDelayTimer->isActive()) {
+        m_thumbnailDelayTimer->stop();
+    }
+    
+    // カスタムサムネイルプレビューを非表示
+    if (m_thumbnailPreview) {
+        m_thumbnailPreview->hideThumbnail();
+    }
+    
+    // ホバー情報をクリア
+    m_hoverButton = nullptr;
+}
+
+void TaskbarWindow::onThumbnailDelayTimeout()
+{
+    if (!m_hoverButton) {
+        LOG_WARNING("⚠️ タイマータイムアウト時にホバーボタンが無効");
+        return;
+    }
+    
+    LOG_INFO(QString("⏰ サムネイル表示タイマータイムアウト: %1").arg(m_hoverWindowInfo.title));
+    
+    // サムネイル取得とカスタムプレビュー表示（高画質・大サイズ）
+    QSize highQualitySize(300, 225); // より大きく高画質に
+    QPixmap thumbnail = m_thumbnailManager->captureWindowThumbnail(m_hoverWindowInfo.hwnd, highQualitySize);
+    
+    // ボタンの位置を取得してプレビュー表示位置を計算
+    QPoint buttonPos = m_hoverButton->mapToGlobal(QPoint(0, 0));
+    QPoint previewPos = QPoint(buttonPos.x() + m_hoverButton->width() / 2, 
+                              buttonPos.y());
+    
+    // カスタムサムネイルプレビューを表示（HWNDも渡してクリック機能有効化）
+    m_thumbnailPreview->showThumbnail(thumbnail, m_hoverWindowInfo.title, previewPos, m_hoverWindowInfo.hwnd);
+    
+    if (!thumbnail.isNull()) {
+        LOG_INFO("✅ カスタムサムネイルプレビュー表示完了");
+    } else {
+        LOG_WARNING("⚠️ サムネイル取得失敗、プレースホルダー表示");
+    }
+}
+
+QString TaskbarWindow::thumbnailToBase64(const QPixmap& pixmap)
+{
+    QByteArray ba;
+    QBuffer buffer(&ba);
+    buffer.open(QIODevice::WriteOnly);
+    pixmap.save(&buffer, "PNG");
+    return ba.toBase64();
+}
+
+bool TaskbarWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    QPushButton *button = qobject_cast<QPushButton*>(watched);
+    if (button && button->property("windowInfo").isValid()) {
+        WindowInfo windowInfo = button->property("windowInfo").value<WindowInfo>();
+        
+        switch (event->type()) {
+        case QEvent::HoverEnter:
+            onButtonHoverEnter(button, windowInfo);
+            return false;  // イベントを継続処理
+        case QEvent::HoverLeave:
+            onButtonHoverLeave();
+            return false;  // イベントを継続処理
+        default:
+            break;
+        }
+    }
+    
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void TaskbarWindow::onThumbnailClicked(HWND hwnd)
+{
+    if (!hwnd) {
+        LOG_WARNING("⚠️ サムネイルクリック時に無効なHWND");
+        return;
+    }
+    
+    LOG_INFO(QString("🖱️ サムネイルクリック - ウィンドウアクティベート: HWND=%1")
+             .arg(reinterpret_cast<quintptr>(hwnd)));
+    
+    // ウィンドウをアクティベート（ボタンクリックと同じ処理）
+    if (IsIconic(hwnd)) {
+        ShowWindow(hwnd, SW_RESTORE);  // 最小化されている場合は復元
+        LOG_INFO("🔄 最小化ウィンドウを復元");
+    }
+    
+    SetForegroundWindow(hwnd);
+    LOG_INFO("✅ サムネイルクリックによるウィンドウアクティベート完了");
 }
