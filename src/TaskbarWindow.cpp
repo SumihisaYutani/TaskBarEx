@@ -526,7 +526,61 @@ void TaskbarWindow::leaveEvent(QEvent *event)
     // イベント処理は無効（マウス座標チェックのcheckMousePositionで処理）
 }
 
-// 新しいマウス座標ベース表示制御
+// タスクバー表示状態検出（フルスクリーンゲーム対応）
+bool TaskbarWindow::isTaskbarVisible()
+{
+    HWND taskbarHandle = FindWindow(L"Shell_TrayWnd", nullptr);
+    if (!taskbarHandle) {
+        LOG_INFO("⚠️ タスクバーハンドルが見つかりません - デフォルトで非表示を返します");
+        return false; // タスクバーが見つからない場合は非表示とする
+    }
+    
+    // タスクバーの位置を取得
+    RECT taskbarRect;
+    if (!GetWindowRect(taskbarHandle, &taskbarRect)) {
+        return false; // 位置取得失敗時は非表示とする
+    }
+    
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    
+    // フルスクリーンアプリ検出
+    HWND foregroundWindow = GetForegroundWindow();
+    bool isFullscreenApp = false;
+    
+    if (foregroundWindow) {
+        RECT foregroundRect;
+        if (GetWindowRect(foregroundWindow, &foregroundRect)) {
+            // フォアグラウンドウィンドウがフルスクリーンかチェック
+            isFullscreenApp = (foregroundRect.left <= 0 && 
+                             foregroundRect.top <= 0 && 
+                             foregroundRect.right >= GetSystemMetrics(SM_CXSCREEN) && 
+                             foregroundRect.bottom >= screenHeight);
+        }
+    }
+    
+    // タスクバーの実際の可視性判定
+    bool isWindowVisible = IsWindowVisible(taskbarHandle);
+    bool isInScreenArea = (taskbarRect.top < screenHeight) && (taskbarRect.bottom > screenHeight - 50);
+    
+    // フルスクリーンアプリが起動中の場合は、タスクバーを非表示とみなす
+    bool actuallyVisible = isWindowVisible && isInScreenArea && !isFullscreenApp;
+    
+    // デバッグログ（頻度制限）
+    static int debugCounter = 0;
+    if (debugCounter++ % 50 == 0) { // 50回に1回ログ出力
+        LOG_INFO(QString("🔍 タスクバー詳細: top=%1, bottom=%2, screenH=%3, WindowVisible=%4, フルスクリーン=%5, 結果=%6")
+                 .arg(taskbarRect.top)
+                 .arg(taskbarRect.bottom)
+                 .arg(screenHeight)
+                 .arg(isWindowVisible ? "true" : "false")
+                 .arg(isFullscreenApp ? "true" : "false")
+                 .arg(actuallyVisible ? "true" : "false"));
+    }
+    
+    return actuallyVisible;
+}
+
+// 新しいマウス座標ベース表示制御（タスクバー表示状態をAND条件で追加）
 void TaskbarWindow::checkMousePosition()
 {
     // タイマー動作の確認（最初の数回のみログ出力）
@@ -540,19 +594,22 @@ void TaskbarWindow::checkMousePosition()
     QPoint globalPos = QCursor::pos();
     int mouseY = globalPos.y();
     
-    // 表示判定：マウスが画面下端付近にある場合（画面下端から10ピクセル以内）
-    int showThreshold = m_screenHeight - 10; // 画面下端から10px以内で表示
+    // 新マウス座標ベース表示制御仕様
+    // 表示判定：画面下端から10px以内
+    int showThreshold = m_screenHeight - 10;
     bool shouldShow = (mouseY >= showThreshold);
     
-    // 非表示判定：マウスがアプリバー上端より上にある場合
+    // 非表示判定：アプリバー上端より上
     int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
     bool shouldHide = (mouseY < hideThreshold);
     
     // ログ出力（デバッグ用、頻度制限）
     static int logCounter = 0;
     if (logCounter++ % 20 == 0) {  // 20回に1回ログ出力
-        LOG_INFO(QString("🖱️ マウス座標Y=%1, 画面高さ=%2, 表示閾値=%3, 非表示閾値=%4, 表示=%5, 非表示=%6")
-                 .arg(mouseY).arg(m_screenHeight).arg(showThreshold).arg(hideThreshold)
+        LOG_INFO(QString("🖱️ マウス座標Y=%1, 表示閾値=%2, 非表示閾値=%3, shouldShow=%4, shouldHide=%5")
+                 .arg(mouseY)
+                 .arg(showThreshold)
+                 .arg(hideThreshold)
                  .arg(shouldShow ? "true" : "false")
                  .arg(shouldHide ? "true" : "false"));
     }
@@ -562,20 +619,24 @@ void TaskbarWindow::checkMousePosition()
         // 非表示ディレイタイマーが動作中なら停止
         if (m_hideDelayTimer->isActive()) {
             m_hideDelayTimer->stop();
-            LOG_INFO("⏹️ 非表示ディレイタイマー停止（マウスが表示範囲に戻りました）");
+            LOG_INFO("⏹️ 非表示ディレイタイマー停止（表示条件が満たされました）");
         }
-        LOG_INFO(QString("🚀 SHOW: マウスが画面下端に到達 (Y=%1 >= %2)").arg(mouseY).arg(showThreshold));
+        LOG_INFO(QString("🚀 SHOW: マウス画面下端到達 (マウスY=%1, 表示閾値=%2)")
+                 .arg(mouseY).arg(showThreshold));
         show();
     } else if (shouldHide && isVisible()) {
         // 非表示ディレイタイマーがまだ動作していない場合のみ開始
         if (!m_hideDelayTimer->isActive()) {
-            LOG_INFO(QString("⏱️ HIDE DELAY START: マウスが閾値より上に移動、0.5秒後に非表示 (Y=%1 < %2)").arg(mouseY).arg(hideThreshold));
+            QString reason = "マウス上部移動";
+            LOG_INFO(QString("⏱️ HIDE DELAY START: %1のため0.5秒後に非表示 (マウスY=%2, 非表示閾値=%3)")
+                     .arg(reason).arg(mouseY).arg(hideThreshold));
             m_hideDelayTimer->start();
         }
     } else if (!shouldHide && isVisible() && m_hideDelayTimer->isActive()) {
-        // マウスが非表示範囲から戻った場合、ディレイタイマーを停止
+        // 非表示条件が解除された場合、ディレイタイマーを停止
         m_hideDelayTimer->stop();
-        LOG_INFO(QString("⏹️ HIDE DELAY CANCELED: マウスが表示範囲に戻りました (Y=%1)").arg(mouseY));
+        LOG_INFO(QString("⏹️ HIDE DELAY CANCELED: 非表示条件が解除 (マウスY=%1, 非表示閾値=%2)")
+                 .arg(mouseY).arg(hideThreshold));
     }
 }
 
@@ -950,7 +1011,7 @@ void TaskbarWindow::onThumbnailDelayTimeout()
     LOG_INFO(QString("⏰ サムネイル表示タイマータイムアウト: %1").arg(m_hoverWindowInfo.title));
     
     // サムネイル取得とカスタムプレビュー表示（高画質・大サイズ）
-    QSize highQualitySize(300, 225); // より大きく高画質に
+    QSize highQualitySize(450, 338); // 1.5倍サイズで高画質に（300*1.5=450, 225*1.5=337.5≒338）
     QPixmap thumbnail = m_thumbnailManager->captureWindowThumbnail(m_hoverWindowInfo.hwnd, highQualitySize);
     
     // ボタンの位置を取得してプレビュー表示位置を計算

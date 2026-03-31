@@ -59,9 +59,7 @@ void Logger::log(LogLevel level, const QString& message)
     
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
     QString logLine = QString("[%1] [%2] %3")
-                      .arg(timestamp)
-                      .arg(levelToString(level))
-                      .arg(message);
+                      .arg(timestamp, levelToString(level), message);
     
     m_stream << logLine << Qt::endl;
     m_stream.flush();

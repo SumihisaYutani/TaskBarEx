@@ -45,9 +45,9 @@ private:
     QTimer *m_autoHideTimer;
     HWND m_currentHwnd;  // クリック時フォーカス用HWND保存
     
-    static const int THUMBNAIL_WIDTH = 300;   // 200 -> 300 に拡大
-    static const int THUMBNAIL_HEIGHT = 225;  // 150 -> 225 に拡大（4:3比率維持）
-    static const int WIDGET_MARGIN = 12;      // マージンも拡大
+    static const int THUMBNAIL_WIDTH = 450;   // 300 -> 450 に1.5倍拡大
+    static const int THUMBNAIL_HEIGHT = 338;  // 225 -> 338 に1.5倍拡大（4:3比率維持）
+    static const int WIDGET_MARGIN = 18;      // マージンも1.5倍拡大
     static const int AUTO_HIDE_DELAY = 3000; // 3秒で自動非表示
 };
 

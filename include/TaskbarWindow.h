@@ -103,6 +103,9 @@ private:
     
     // サムネイル関連ヘルパー
     QString thumbnailToBase64(const QPixmap& pixmap);
+    
+    // タスクバー表示状態検出
+    bool isTaskbarVisible();
 };
 
 #endif // TASKBARWINDOW_H

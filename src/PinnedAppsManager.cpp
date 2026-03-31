@@ -111,7 +111,7 @@ void PinnedAppsManager::detectPinnedAppsFromRegistry()
     QStringList keys = taskbandRegistry.allKeys();
     logInfo(QString("📋 Taskbandレジストリキー数: %1").arg(keys.size()));
     
-    for (const QString &key : keys) {
+    for (const auto &key : std::as_const(keys)) {
         QVariant value = taskbandRegistry.value(key);
         logInfo(QString("🔑 レジストリキー: %1 = %2").arg(key, value.toString()));
     }
@@ -150,7 +150,7 @@ void PinnedAppsManager::detectPinnedAppsFromShortcuts()
     logInfo(QString("🔗 ショートカットファイル数: %1").arg(shortcutFiles.size()));
     
     int order = 0;
-    for (const QFileInfo &shortcutInfo : shortcutFiles) {
+    for (const auto &shortcutInfo : std::as_const(shortcutFiles)) {
         QString shortcutPath = shortcutInfo.absoluteFilePath();
         QString targetPath = resolveShortcutTarget(shortcutPath);
         

@@ -26,7 +26,7 @@ WindowThumbnailManager::WindowThumbnailManager(QObject *parent)
     , m_cacheCleanupTimer(new QTimer(this))
     , m_cacheEnabled(true)
     , m_cacheTimeout(30000)  // 30秒キャッシュ
-    , m_thumbnailQuality(80) // 80%品質
+    , m_thumbnailQuality(95) // 95%品質（高画質）
 {
     logInfo("🖼️ WindowThumbnailManager初期化開始");
     
@@ -302,11 +302,27 @@ QPixmap WindowThumbnailManager::scaleAndCleanThumbnail(const QPixmap &source, co
         return QPixmap();
     }
     
-    // アスペクト比を保持してスケール
-    QPixmap scaled = source.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // 高品質スケーリング処理
+    QPixmap scaled;
     
-    // 品質設定に応じて最適化
-    // 今回は基本的なスケーリングのみ
+    // 元画像がターゲットサイズより大きい場合は高品質にスケールダウン
+    if (source.width() > targetSize.width() || source.height() > targetSize.height()) {
+        // マルチステップスケーリングで品質向上
+        QPixmap intermediate = source;
+        QSize currentSize = source.size();
+        
+        // 段階的にスケールダウン（50%ずつ）
+        while (currentSize.width() > targetSize.width() * 2 || currentSize.height() > targetSize.height() * 2) {
+            currentSize = QSize(currentSize.width() / 2, currentSize.height() / 2);
+            intermediate = intermediate.scaled(currentSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        
+        // 最終的にターゲットサイズにスケール
+        scaled = intermediate.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    } else {
+        // 拡大の場合は通常のスケーリング
+        scaled = source.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
     
     return scaled;
 }
