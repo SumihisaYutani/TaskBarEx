@@ -307,9 +307,9 @@ void TaskbarWindow::setupTimer()
     connect(m_updateTimer, &QTimer::timeout, 
             this, &TaskbarWindow::updateTaskbarItems);
             
-    // サムネイル表示ディレイタイマーのセットアップ
+    // サムネイル表示ディレイタイマーのセットアップ（応答性向上）
     m_thumbnailDelayTimer->setSingleShot(true);
-    m_thumbnailDelayTimer->setInterval(500);  // 500ms ディレイ
+    m_thumbnailDelayTimer->setInterval(300);  // 300ms ディレイ（応答性向上）
     connect(m_thumbnailDelayTimer, &QTimer::timeout,
             this, &TaskbarWindow::onThumbnailDelayTimeout);
     
@@ -969,14 +969,30 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     appButton->installEventFilter(this);
     
     connect(appButton, &QPushButton::clicked, this, [this, appButton]() {
+        // サムネイル競合回避: クリック時に全てのサムネイル処理を即座停止
+        if (m_thumbnailDelayTimer->isActive()) {
+            m_thumbnailDelayTimer->stop();
+            LOG_INFO("⚡ ボタンクリック - サムネイルディレイタイマー即座停止");
+        }
+        
+        // サムネイルプレビューも即座に非表示
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+            m_thumbnailPreview->hideThumbnail();
+            LOG_INFO("⚡ ボタンクリック - サムネイルプレビュー即座非表示");
+        }
+        
+        // ホバー状態をクリア
+        m_hoverButton = nullptr;
+        
         HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
         if (hwnd) {
             // ウィンドウをアクティベート
             if (IsIconic(hwnd)) {
                 ShowWindow(hwnd, SW_RESTORE);  // 最小化されている場合は復元
+                LOG_INFO("🔄 最小化ウィンドウを復元");
             }
             SetForegroundWindow(hwnd);
-            LOG_INFO("🖱️ ウィンドウをアクティベート");
+            LOG_INFO("🖱️ ウィンドウをアクティベート完了");
         }
     });
     
@@ -999,7 +1015,7 @@ void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& wi
         m_thumbnailDelayTimer->stop();
     }
     
-    // 500ms後にサムネイル表示
+    // 300ms後にサムネイル表示（応答性向上）
     m_thumbnailDelayTimer->start();
 }
 
@@ -1007,14 +1023,16 @@ void TaskbarWindow::onButtonHoverLeave()
 {
     LOG_INFO("🖱️ ボタンホバー終了");
     
-    // ディレイタイマーを停止
+    // ディレイタイマーを即座停止
     if (m_thumbnailDelayTimer->isActive()) {
         m_thumbnailDelayTimer->stop();
+        LOG_INFO("⚡ ホバー離脱 - サムネイルディレイタイマー即座停止");
     }
     
-    // カスタムサムネイルプレビューを非表示
-    if (m_thumbnailPreview) {
+    // カスタムサムネイルプレビューを即座非表示
+    if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
         m_thumbnailPreview->hideThumbnail();
+        LOG_INFO("⚡ ホバー離脱 - サムネイルプレビュー即座非表示");
     }
     
     // ホバー情報をクリア

@@ -117,6 +117,7 @@ TaskbarViewer/
 - [x] 循環参照問題解決
 - [x] **フルスクリーンゲーム対応機能実装**
 - [x] **最大化ウィンドウとフルスクリーンアプリの区別実装**
+- [x] **サムネイル表示とボタンクリック競合問題解決**
 - [x] テスト・デバッグ完了
 
 ### 解決済み問題
@@ -132,6 +133,7 @@ TaskbarViewer/
 - ✅ **表示維持範囲の問題**
 - ✅ **フルスクリーンゲーム時のTaskBarEx表示問題**
 - ✅ **最大化ウィンドウの誤フルスクリーン検出問題**
+- ✅ **サムネイル表示とボタンクリック処理の競合による応答性低下問題**
 
 ## 最終実装された動作仕様
 
@@ -150,6 +152,8 @@ TaskbarViewer/
 - **表示維持範囲**: Y=984～1070（86px幅）
 - **チェック間隔**: 50ms（高精度マウストラッキング）
 - **フルスクリーン検出**: 真のフルスクリーンアプリ（Rect=(0,0,1920,1080)）のみを検出、最大化ウィンドウ（Rect=(-8,-8,1928,1088)）は除外
+- **サムネイル表示ディレイ**: 300ms（応答性向上のため500ms→300msに短縮）
+- **競合回避機能**: ボタンクリック時にサムネイル処理を即座停止
 
 #### 実装された主要変更
 
@@ -198,7 +202,29 @@ isFullscreenApp = (foregroundRect.left == 0 &&
                  foregroundRect.bottom == screenHeight);
 ```
 
-**4. アプリバー表示領域の修正**
+**4. サムネイル表示とボタンクリック競合問題解決**
+```cpp
+// ボタンクリック時の競合回避処理
+connect(appButton, &QPushButton::clicked, this, [this, appButton]() {
+    // サムネイル競合回避: クリック時に全てのサムネイル処理を即座停止
+    if (m_thumbnailDelayTimer->isActive()) {
+        m_thumbnailDelayTimer->stop();
+    }
+    
+    // サムネイルプレビューも即座に非表示
+    if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+        m_thumbnailPreview->hideThumbnail();
+    }
+    
+    // ホバー状態をクリア
+    m_hoverButton = nullptr;
+    
+    // ウィンドウをアクティベート
+    SetForegroundWindow(hwnd);
+});
+```
+
+**5. アプリバー表示領域の修正**
 ```cpp
 // メニューバー・ステータスバーの完全無効化
 menuBar()->setVisible(false);
