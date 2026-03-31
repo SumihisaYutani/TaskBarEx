@@ -405,6 +405,10 @@ void TaskbarWindow::populateTaskbarList()
     
     // デバッグ用：最終的なレイアウトの状態をチェック
     LOG_INFO(QString("Final 2段レイアウト state - Running apps count: %1").arg(m_runningLayout->count()));
+    
+    // アプリバー高さは2段レイアウトで86pxに固定済み（updateAppBarHeight呼び出し削除）
+    // updateAppBarHeight();
+    
     LOG_INFO("✅ populateTaskbarList (2段レイアウト対応) 完了");
 }
 
@@ -619,7 +623,7 @@ void TaskbarWindow::checkMousePosition()
     bool shouldShow = (mouseY >= showThreshold) && !taskbarSuppressed;
     
     // 非表示判定：アプリバー上端より上 OR タスクバーが抑止されている
-    int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
+    int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;  // 動的計算
     bool shouldHide = (mouseY < hideThreshold) || taskbarSuppressed;
     
     // ログ出力（デバッグ用、頻度制限）
@@ -854,28 +858,27 @@ void TaskbarWindow::populatePinnedAppsRow()
 
 void TaskbarWindow::updateAppBarHeight()
 {
-    // 動的な高さ計算（今後の拡張用）
-    int newHeight = 86;  // 基本の2段高さ
-    
-    // TODO: アイコン数に応じて2列表示時の高さ計算を追加
+    // 動的な高さ計算を一時的に無効化（固定高さに戻す）
+    int newHeight = 48;  // 固定1段高さ
     
     if (newHeight != m_appBarHeight) {
         m_appBarHeight = newHeight;
         setFixedHeight(m_appBarHeight);
         updateMouseThresholds();
         
-        LOG_INFO(QString("📏 アプリバー高さ更新: %1px").arg(m_appBarHeight));
+        LOG_INFO(QString("📏 アプリバー高さ固定: %1px").arg(m_appBarHeight));
     }
 }
 
 void TaskbarWindow::updateMouseThresholds()
 {
-    // マウス座標閾値を動的に更新
+    // マウス座標閾値（動的計算）
     if (m_screenHeight > 0) {
         int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
         int showThreshold = m_screenHeight - 10;
         
-        LOG_INFO(QString("🖱️ マウス閾値更新 - 表示: Y>=%1, 非表示: Y<%2").arg(showThreshold).arg(hideThreshold));
+        LOG_INFO(QString("🖱️ マウス閾値更新 - 非表示: Y<%1, 表示: Y>=%2 (アプリバー高さ:%3px)")
+                 .arg(hideThreshold).arg(showThreshold).arg(m_appBarHeight));
     }
 }
 
@@ -940,12 +943,25 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
         "}"
     );
     
+    // ツールチップ用のタイトル準備（フォルダパス短縮）
+    QString toolTipTitle = window.title;
+    if (toolTipTitle.contains('\\') || toolTipTitle.contains('/')) {
+        QFileInfo fileInfo(toolTipTitle);
+        if (fileInfo.isAbsolute()) {
+            QString shortTitle = fileInfo.fileName();
+            if (shortTitle.isEmpty()) {
+                shortTitle = fileInfo.absolutePath().split(QDir::separator()).last();
+            }
+            toolTipTitle = shortTitle;
+        }
+    }
+    
     // アイコン設定
     if (!window.icon.isNull()) {
         QIcon icon(window.icon);
         appButton->setIcon(icon);
         appButton->setIconSize(QSize(32, 32));
-        appButton->setToolTip(window.title);
+        appButton->setToolTip(toolTipTitle);
     } else {
         // アイコンがない場合はテキスト表示
         QString displayText = window.title.left(3).toUpper();
@@ -953,7 +969,7 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
             displayText = window.executablePath.split('/').last().left(3).toUpper();
         }
         appButton->setText(displayText);
-        appButton->setToolTip(window.title.isEmpty() ? window.executablePath : window.title);
+        appButton->setToolTip(window.title.isEmpty() ? window.executablePath : toolTipTitle);
     }
     
     // HWNDをボタンに保存してクリックイベント設定
@@ -969,6 +985,11 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     appButton->installEventFilter(this);
     
     connect(appButton, &QPushButton::clicked, this, [this, appButton]() {
+        // ボタンクリック開始ログ
+        QString buttonText = appButton->text();
+        HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
+        LOG_INFO(QString("🖱️ ボタンクリック検出: '%1' (HWND=%2)").arg(buttonText).arg(reinterpret_cast<quintptr>(hwnd)));
+        
         // サムネイル競合回避: クリック時に全てのサムネイル処理を即座停止
         if (m_thumbnailDelayTimer->isActive()) {
             m_thumbnailDelayTimer->stop();
@@ -984,15 +1005,17 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
         // ホバー状態をクリア
         m_hoverButton = nullptr;
         
-        HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
-        if (hwnd) {
-            // ウィンドウをアクティベート
-            if (IsIconic(hwnd)) {
-                ShowWindow(hwnd, SW_RESTORE);  // 最小化されている場合は復元
-                LOG_INFO("🔄 最小化ウィンドウを復元");
-            }
-            SetForegroundWindow(hwnd);
-            LOG_INFO("🖱️ ウィンドウをアクティベート完了");
+        if (!hwnd) {
+            LOG_WARNING("⚠️ 無効なHWND - ボタンクリック処理中断");
+            return;
+        }
+        
+        // TaskbarModel経由でアクティベート（詳細ログ付き）
+        bool success = m_model->activateWindow(hwnd);
+        if (success) {
+            LOG_INFO("✅ ウィンドウアクティベート成功");
+        } else {
+            LOG_WARNING("❌ ウィンドウアクティベート失敗");
         }
     });
     
@@ -1000,6 +1023,84 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     m_runningLayout->addWidget(appButton);
     
     LOG_INFO(QString("✅ 起動中アプリボタン追加: %1").arg(window.title.isEmpty() ? window.executablePath : window.title));
+}
+
+void TaskbarWindow::createGroupButton(const QVector<WindowInfo>& group)
+{
+    if (group.isEmpty()) return;
+    
+    // グループの代表ウィンドウ（最初のウィンドウ）を使用してボタンを作成
+    const WindowInfo& representative = group[0];
+    
+    QPushButton *groupButton = new QPushButton(m_runningAppsRow);
+    groupButton->setFixedSize(48, 48);
+    groupButton->setFlat(true);
+    groupButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: rgba(255, 255, 255, 10);"
+        "    border: 1px solid rgba(255, 255, 255, 30);"
+        "    border-radius: 4px;"
+        "    margin: 1px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: rgba(255, 255, 255, 20);"
+        "    border: 1px solid rgba(255, 255, 255, 50);"
+        "}"
+        "QPushButton:pressed {"
+        "    background-color: rgba(255, 255, 255, 30);"
+        "}"
+    );
+    
+    // 代表ウィンドウのアイコンを使用
+    if (!representative.icon.isNull()) {
+        QIcon icon(representative.icon);
+        groupButton->setIcon(icon);
+        groupButton->setIconSize(QSize(32, 32));
+        
+        // グループサイズをツールチップに表示
+        QString appName = representative.title.contains(" - ") ? 
+            representative.title.split(" - ").last() : representative.title;
+        groupButton->setToolTip(QString("%1 (%2個のウィンドウ)").arg(appName).arg(group.size()));
+    }
+    
+    // グループ情報をボタンに保存
+    QVariantList groupData;
+    for (const auto& window : group) {
+        groupData.append(QVariant::fromValue(window));
+    }
+    groupButton->setProperty("groupWindows", groupData);
+    groupButton->setProperty("isGroupButton", true);
+    
+    // ホバーイベントを有効化
+    groupButton->setAttribute(Qt::WA_Hover, true);
+    groupButton->installEventFilter(this);
+    
+    // クリックイベント：グループ内ウィンドウのサムネイル一覧表示
+    connect(groupButton, &QPushButton::clicked, this, [this, groupButton]() {
+        QVariantList groupData = groupButton->property("groupWindows").toList();
+        LOG_INFO(QString("🖱️ グループボタンクリック検出: %1個のウィンドウ").arg(groupData.size()));
+        
+        // TODO: ここでサムネイル一覧を表示する
+        // 現在は最初のウィンドウをアクティベートする簡易実装
+        if (!groupData.isEmpty()) {
+            WindowInfo firstWindow = groupData[0].value<WindowInfo>();
+            bool success = m_model->activateWindow(firstWindow.hwnd);
+            LOG_INFO(QString("✅ グループの最初のウィンドウをアクティベート: %1").arg(firstWindow.title));
+        }
+    });
+    
+    // レイアウトに追加
+    m_runningLayout->addWidget(groupButton);
+    
+    // グループボタンの視覚的な区別のためのマーカー（複数ウィンドウ表示）
+    if (group.size() > 1) {
+        // ボタンの右下に小さな数字バッジを表示（将来の実装）
+    }
+    
+    LOG_INFO(QString("✅ グループボタン追加: %1 (%2個のウィンドウ)")
+             .arg(representative.title.contains(" - ") ? 
+                  representative.title.split(" - ").last() : representative.title)
+             .arg(group.size()));
 }
 
 void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& windowInfo)
@@ -1039,6 +1140,37 @@ void TaskbarWindow::onButtonHoverLeave()
     m_hoverButton = nullptr;
 }
 
+void TaskbarWindow::onGroupButtonHoverEnter(QPushButton* button)
+{
+    if (!button) return;
+    
+    QVariantList groupData = button->property("groupWindows").toList();
+    if (groupData.isEmpty()) {
+        LOG_WARNING("⚠️ グループボタンにウィンドウデータが設定されていません");
+        return;
+    }
+    
+    // グループの最初のウィンドウを代表として使用
+    WindowInfo representative = groupData[0].value<WindowInfo>();
+    
+    LOG_INFO(QString("🖱️ グループボタンホバー開始: %1 (%2個のウィンドウ)")
+             .arg(representative.title).arg(groupData.size()));
+    
+    // 既存のタイマーをクリア
+    if (m_thumbnailDelayTimer->isActive()) {
+        m_thumbnailDelayTimer->stop();
+        LOG_INFO("⏹️ 既存のサムネイルタイマーを停止");
+    }
+    
+    // ホバー状態を設定
+    m_hoverButton = button;
+    m_hoverWindowInfo = representative;  // 代表ウィンドウ情報を保存
+    
+    // タイマー開始（グループの場合も同じディレイ）
+    m_thumbnailDelayTimer->start();
+    LOG_INFO("⏰ グループサムネイル表示タイマー開始");
+}
+
 void TaskbarWindow::onThumbnailDelayTimeout()
 {
     if (!m_hoverButton) {
@@ -1046,6 +1178,7 @@ void TaskbarWindow::onThumbnailDelayTimeout()
         return;
     }
     
+    // 通常ボタンの処理
     LOG_INFO(QString("⏰ サムネイル表示タイマータイムアウト: %1").arg(m_hoverWindowInfo.title));
     
     // サムネイル取得とカスタムプレビュー表示（高画質・大サイズ）
@@ -1057,14 +1190,71 @@ void TaskbarWindow::onThumbnailDelayTimeout()
     QPoint previewPos = QPoint(buttonPos.x() + m_hoverButton->width() / 2, 
                               buttonPos.y());
     
+    // ボタン位置デバッグログ
+    LOG_INFO(QString("🔍 ボタン位置詳細: ローカル位置(%1,%2), グローバル位置(%3,%4), TaskBarEx位置(%5,%6)")
+             .arg(m_hoverButton->x()).arg(m_hoverButton->y())
+             .arg(buttonPos.x()).arg(buttonPos.y())
+             .arg(this->x()).arg(this->y()));
+    
+    // フォルダの場合はタイトルを短縮（パス→フォルダ名のみ）
+    QString displayTitle = m_hoverWindowInfo.title;
+    if (displayTitle.contains('\\') || displayTitle.contains('/')) {
+        // パス区切り文字が含まれている場合はフォルダ名のみを抽出
+        QFileInfo fileInfo(displayTitle);
+        if (fileInfo.isAbsolute()) {
+            displayTitle = fileInfo.fileName();
+            if (displayTitle.isEmpty()) {
+                // ルートディレクトリの場合
+                displayTitle = fileInfo.absolutePath().split(QDir::separator()).last();
+            }
+            LOG_INFO(QString("📁 フォルダタイトル短縮: %1 → %2")
+                     .arg(m_hoverWindowInfo.title).arg(displayTitle));
+        }
+    }
+    
     // カスタムサムネイルプレビューを表示（HWNDも渡してクリック機能有効化）
-    m_thumbnailPreview->showThumbnail(thumbnail, m_hoverWindowInfo.title, previewPos, m_hoverWindowInfo.hwnd);
+    m_thumbnailPreview->showThumbnail(thumbnail, displayTitle, previewPos, m_hoverWindowInfo.hwnd);
     
     if (!thumbnail.isNull()) {
         LOG_INFO("✅ カスタムサムネイルプレビュー表示完了");
     } else {
         LOG_WARNING("⚠️ サムネイル取得失敗、プレースホルダー表示");
     }
+}
+
+void TaskbarWindow::onGroupThumbnailDisplay()
+{
+    if (!m_hoverButton) return;
+    
+    QVariantList groupData = m_hoverButton->property("groupWindows").toList();
+    if (groupData.isEmpty()) {
+        LOG_WARNING("⚠️ グループデータが空です");
+        return;
+    }
+    
+    LOG_INFO(QString("🖼️ グループサムネイル表示開始: %1個のウィンドウ").arg(groupData.size()));
+    
+    // とりあえず最初のウィンドウのサムネイルを表示（簡易実装）
+    WindowInfo firstWindow = groupData[0].value<WindowInfo>();
+    
+    // サムネイル取得
+    QSize highQualitySize(450, 338);
+    QPixmap thumbnail = m_thumbnailManager->captureWindowThumbnail(firstWindow.hwnd, highQualitySize);
+    
+    // ボタンの位置を取得
+    QPoint buttonPos = m_hoverButton->mapToGlobal(QPoint(0, 0));
+    QPoint previewPos = QPoint(buttonPos.x() + m_hoverButton->width() / 2, buttonPos.y());
+    
+    // グループ情報をタイトルに追加
+    QString groupTitle = QString("%1 (グループ: %2個)")
+                        .arg(firstWindow.title.contains(" - ") ? 
+                             firstWindow.title.split(" - ").last() : firstWindow.title)
+                        .arg(groupData.size());
+    
+    // サムネイルプレビュー表示
+    m_thumbnailPreview->showThumbnail(thumbnail, groupTitle, previewPos, firstWindow.hwnd);
+    
+    LOG_INFO("✅ グループサムネイルプレビュー表示完了");
 }
 
 QString TaskbarWindow::thumbnailToBase64(const QPixmap& pixmap)
@@ -1079,19 +1269,25 @@ QString TaskbarWindow::thumbnailToBase64(const QPixmap& pixmap)
 bool TaskbarWindow::eventFilter(QObject *watched, QEvent *event)
 {
     QPushButton *button = qobject_cast<QPushButton*>(watched);
-    if (button && button->property("windowInfo").isValid()) {
-        WindowInfo windowInfo = button->property("windowInfo").value<WindowInfo>();
-        
-        switch (event->type()) {
-        case QEvent::HoverEnter:
+    if (!button) {
+        return QMainWindow::eventFilter(watched, event);
+    }
+    
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+        // 通常のボタン（単一ウィンドウ）のみ処理
+        if (button->property("windowInfo").isValid()) {
+            WindowInfo windowInfo = button->property("windowInfo").value<WindowInfo>();
             onButtonHoverEnter(button, windowInfo);
-            return false;  // イベントを継続処理
-        case QEvent::HoverLeave:
-            onButtonHoverLeave();
-            return false;  // イベントを継続処理
-        default:
-            break;
         }
+        return false;  // イベントを継続処理
+        
+    case QEvent::HoverLeave:
+        onButtonHoverLeave();
+        return false;  // イベントを継続処理
+        
+    default:
+        break;
     }
     
     return QMainWindow::eventFilter(watched, event);

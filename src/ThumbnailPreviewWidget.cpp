@@ -30,6 +30,7 @@ void ThumbnailPreviewWidget::setupWidget()
     setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_ShowWithoutActivating, true);
+    // サムネイルクリック機能を無効化（マウスイベント透過を削除）
     setFixedSize(THUMBNAIL_WIDTH + WIDGET_MARGIN * 2, THUMBNAIL_HEIGHT + 50 + WIDGET_MARGIN * 2);
     
     // レイアウト設定
@@ -81,8 +82,8 @@ void ThumbnailPreviewWidget::showThumbnail(const QPixmap &thumbnail, const QStri
 {
     LOG_INFO(QString("🖼️ サムネイル表示: %1").arg(title));
     
-    // HWNDを保存（クリック時のフォーカス用）
-    m_currentHwnd = hwnd;
+    // サムネイルクリック機能無効化のためHWNDは保存しない
+    m_currentHwnd = nullptr;
     
     // サムネイル設定
     if (!thumbnail.isNull()) {
@@ -144,11 +145,29 @@ void ThumbnailPreviewWidget::updatePosition(const QPoint &position)
     int x = position.x() - width() / 2;  // 中央配置
     int y = position.y() - height() - 10;  // ボタンの上に表示
     
+    // 詳細な位置計算ログ
+    LOG_INFO(QString("🎯 位置計算詳細: ボタン位置(%1, %2), ウィジェットサイズ(%3, %4)")
+             .arg(position.x()).arg(position.y()).arg(width()).arg(height()));
+    LOG_INFO(QString("🎯 初期計算Y座標: %1 - %2 - 10 = %3")
+             .arg(position.y()).arg(height()).arg(y));
+    
     // 画面境界チェック
     if (x < 0) x = 0;
     if (x + width() > screenGeometry.width()) x = screenGeometry.width() - width();
-    if (y < 0) y = position.y() + 30;  // ボタンの下に表示
-    if (y + height() > screenGeometry.height()) y = screenGeometry.height() - height();
+    
+    // Y座標の詳細な境界チェック
+    if (y < 0) {
+        int originalY = y;
+        y = position.y() + 30;  // ボタンの下に表示
+        LOG_INFO(QString("⬇️ Y座標補正（上端越え）: %1 → %2（ボタン位置%3 + 30）")
+                 .arg(originalY).arg(y).arg(position.y()));
+    }
+    if (y + height() > screenGeometry.height()) {
+        int originalY = y;
+        y = screenGeometry.height() - height();
+        LOG_INFO(QString("⬆️ Y座標補正（下端越え）: %1 → %2（画面高%3 - ウィジェット高%4）")
+                 .arg(originalY).arg(y).arg(screenGeometry.height()).arg(height()));
+    }
     
     move(x, y);
     LOG_INFO(QString("📍 サムネイルウィジェット位置設定: (%1, %2)").arg(x).arg(y));
@@ -188,16 +207,6 @@ void ThumbnailPreviewWidget::onAutoHideTimeout()
 
 void ThumbnailPreviewWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton && m_currentHwnd) {
-        LOG_INFO(QString("🖱️ サムネイルクリック - ウィンドウフォーカス: HWND=%1")
-                 .arg(reinterpret_cast<quintptr>(m_currentHwnd)));
-        
-        // サムネイルクリック時のフォーカス処理
-        emit thumbnailClicked(m_currentHwnd);
-        
-        // サムネイルを非表示
-        hideThumbnail();
-    }
-    
+    // マウスイベント透過により、このメソッドは呼ばれなくなる
     QWidget::mousePressEvent(event);
 }

@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDebug>
+#include <algorithm>
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -21,6 +22,19 @@ void TaskbarModel::updateWindowList()
 {
     m_windows.clear();
     m_visibleWindows.clear();
+    
+    // 無効になったウィンドウの順序情報をクリーンアップ
+    QList<HWND> invalidHwnds;
+    for (auto it = m_windowOrder.begin(); it != m_windowOrder.end(); ++it) {
+        if (!IsWindow(it.key())) {
+            invalidHwnds.append(it.key());
+        }
+    }
+    for (HWND hwnd : invalidHwnds) {
+        m_windowOrder.remove(hwnd);
+        LOG_DEBUG(QString("Removed invalid window from order map: HWND=%1")
+                  .arg(reinterpret_cast<quintptr>(hwnd)));
+    }
     
     LOG_INFO("Starting window enumeration...");
     
@@ -78,7 +92,15 @@ void TaskbarModel::updateWindowList()
     }
     LOG_INFO("Filtering process completed");
     
-    LOG_INFO(QString("Visible windows after filtering: %1").arg(m_visibleWindows.size()));
+    // ウィンドウを固定順序でソート（初回検出順序を維持）
+    std::sort(m_visibleWindows.begin(), m_visibleWindows.end(), [this](const WindowInfo& a, const WindowInfo& b) {
+        int orderA = m_windowOrder.value(a.hwnd, 999999);  // 未登録は最後
+        int orderB = m_windowOrder.value(b.hwnd, 999999);
+        return orderA < orderB;
+    });
+    LOG_INFO("Windows sorted by fixed order");
+    
+    LOG_INFO(QString("Visible windows after filtering and sorting: %1").arg(m_visibleWindows.size()));
     LOG_INFO("About to emit windowListUpdated signal...");
     emit windowListUpdated();
     LOG_INFO("windowListUpdated signal emitted successfully!");
@@ -109,6 +131,13 @@ void TaskbarModel::addWindow(HWND hwnd)
         return;
     }
     
+    // ウィンドウの初回検出順序を記録（固定化のため）
+    if (!m_windowOrder.contains(hwnd)) {
+        m_windowOrder[hwnd] = m_nextOrderIndex++;
+        LOG_DEBUG(QString("New window order assigned: HWND=%1, Order=%2")
+                  .arg(reinterpret_cast<quintptr>(hwnd)).arg(m_windowOrder[hwnd]));
+    }
+    
     WindowInfo info;
     info.hwnd = hwnd;
     
@@ -136,6 +165,8 @@ void TaskbarModel::addWindow(HWND hwnd)
             info.title == "システム トレイ オーバーフロー ウィンドウ。" ||
             info.title == "Windows 入力エクスペリエンス" ||
             info.title == "進行状況" ||
+            info.title.contains("Shell Experience Host", Qt::CaseInsensitive) ||
+            info.title.contains("ShellExperienceHost", Qt::CaseInsensitive) ||
             // アイコン抽出で問題を起こすウィンドウを一時的に除外
             info.title.contains("セットアップ") ||
             info.title.contains("Setup") ||
@@ -151,6 +182,23 @@ void TaskbarModel::addWindow(HWND hwnd)
         DWORD processId = 0;
         GetWindowThreadProcessId(hwnd, &processId);
         info.processId = processId;
+        
+        // Shell Experience Hostプロセス名チェック
+        if (processId > 0) {
+            HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+            if (hProcess) {
+                TCHAR processName[MAX_PATH];
+                if (GetModuleBaseName(hProcess, NULL, processName, MAX_PATH)) {
+                    QString procName = QString::fromWCharArray(processName);
+                    if (procName.contains("ShellExperienceHost", Qt::CaseInsensitive)) {
+                        CloseHandle(hProcess);
+                        LOG_DEBUG(QString("Skipping Shell Experience Host process: %1").arg(procName));
+                        return;
+                    }
+                }
+                CloseHandle(hProcess);
+            }
+        }
         
         info.isMinimized = IsIconic(hwnd);
         
@@ -380,17 +428,55 @@ bool TaskbarModel::isNotToolWindow(HWND hwnd)
 bool TaskbarModel::activateWindow(HWND hwnd)
 {
     if (!hwnd || !IsWindow(hwnd)) {
+        LOG_WARNING(QString("⚠️ 無効なウィンドウハンドル: %1").arg(reinterpret_cast<quintptr>(hwnd)));
         return false;
     }
     
+    // ウィンドウタイトルを取得して詳細ログ
+    wchar_t windowTitle[256];
+    GetWindowTextW(hwnd, windowTitle, 256);
+    QString title = QString::fromWCharArray(windowTitle);
+    
+    LOG_INFO(QString("🎯 ウィンドウアクティベート開始: HWND=%1, Title=%2")
+             .arg(reinterpret_cast<quintptr>(hwnd)).arg(title));
+    
+    // 現在のウィンドウ状態を確認
+    bool isMinimized = IsIconic(hwnd);
+    bool isVisible = IsWindowVisible(hwnd);
+    HWND currentForeground = GetForegroundWindow();
+    
+    LOG_INFO(QString("📊 ウィンドウ状態: 最小化=%1, 可視=%2, 現在のフォアグラウンド=%3")
+             .arg(isMinimized ? "はい" : "いいえ")
+             .arg(isVisible ? "はい" : "いいえ")
+             .arg(reinterpret_cast<quintptr>(currentForeground)));
+    
     // 最小化されている場合は復元
-    if (IsIconic(hwnd)) {
+    if (isMinimized) {
+        LOG_INFO("🔄 最小化ウィンドウを復元中");
         ShowWindow(hwnd, SW_RESTORE);
+        Sleep(50); // 復元処理を待つ
     }
     
     // ウィンドウをアクティブ化
-    SetForegroundWindow(hwnd);
-    return true;
+    LOG_INFO("🚀 SetForegroundWindow実行中");
+    BOOL result = SetForegroundWindow(hwnd);
+    
+    // 結果確認
+    HWND newForeground = GetForegroundWindow();
+    bool success = (newForeground == hwnd);
+    
+    LOG_INFO(QString("✅ アクティベート結果: API戻り値=%1, 新フォアグラウンド=%2, 成功=%3")
+             .arg(result ? "成功" : "失敗")
+             .arg(reinterpret_cast<quintptr>(newForeground))
+             .arg(success ? "はい" : "いいえ"));
+    
+    if (!success) {
+        LOG_WARNING(QString("⚠️ ウィンドウアクティベート失敗: 対象=%1, 実際のフォアグラウンド=%2")
+                   .arg(reinterpret_cast<quintptr>(hwnd))
+                   .arg(reinterpret_cast<quintptr>(newForeground)));
+    }
+    
+    return success;
 }
 
 QPixmap TaskbarModel::getWindowIcon(HWND hwnd, bool safeMode)

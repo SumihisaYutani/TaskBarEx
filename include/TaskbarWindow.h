@@ -44,7 +44,9 @@ private slots:
     void onAboutTriggered();
     void checkMousePosition();
     void onButtonHoverEnter(QPushButton* button, const WindowInfo& windowInfo);
+    void onGroupButtonHoverEnter(QPushButton* button);
     void onButtonHoverLeave();
+    void onGroupThumbnailDisplay();
     void onThumbnailDelayTimeout();
     void onThumbnailClicked(HWND hwnd);
 
@@ -61,6 +63,7 @@ private:
     void positionAboveTaskbar();
     void clearTaskbarButtons();
     void createTaskbarButton(const WindowInfo& window);
+    void createGroupButton(const QVector<WindowInfo>& group);
     
     // 新しいマウス座標ベース表示制御
     void setupMouseTracking();

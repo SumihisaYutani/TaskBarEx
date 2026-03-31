@@ -5,6 +5,7 @@
 #include <QVector>
 #include <QPixmap>
 #include <QString>
+#include <QMap>
 #include <windows.h>
 #include "WindowInfo.h"
 
@@ -41,6 +42,10 @@ private:
     
     QVector<WindowInfo> m_windows;
     QVector<WindowInfo> m_visibleWindows;
+    
+    // ウィンドウ順序固定化用
+    QMap<HWND, int> m_windowOrder;  // HWND → 初回検出順序のマップ
+    int m_nextOrderIndex = 0;       // 次に割り当てる順序番号
 };
 
 #endif // TASKBARMODEL_H
