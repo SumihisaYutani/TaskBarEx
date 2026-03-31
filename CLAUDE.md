@@ -115,6 +115,8 @@ TaskbarViewer/
 - [x] **新マウス座標ベース表示制御実装**
 - [x] アプリバー表示領域修正
 - [x] 循環参照問題解決
+- [x] **フルスクリーンゲーム対応機能実装**
+- [x] **最大化ウィンドウとフルスクリーンアプリの区別実装**
 - [x] テスト・デバッグ完了
 
 ### 解決済み問題
@@ -128,15 +130,17 @@ TaskbarViewer/
 - ✅ **複雑なタスクバー連動ロジックの問題（廃止）**
 - ✅ **アプリバー表示領域の見切れ問題**
 - ✅ **表示維持範囲の問題**
+- ✅ **フルスクリーンゲーム時のTaskBarEx表示問題**
+- ✅ **最大化ウィンドウの誤フルスクリーン検出問題**
 
 ## 最終実装された動作仕様
 
-### 新マウス座標ベース表示制御
+### 新マウス座標ベース表示制御（フルスクリーンゲーム対応）
 
 #### 基本動作原理
-- **マウスY座標 >= 1070（画面下端から10px以内）** → TaskBarEx即座表示
+- **マウスY座標 >= 1070（画面下端から10px以内）** AND **フルスクリーンゲーム非起動時** → TaskBarEx即座表示
 - **マウスY座標 984-1070（表示維持範囲）** → TaskBarEx表示継続
-- **マウスY座標 < 984（アプリバー上端より上）** → TaskBarEx即座非表示
+- **マウスY座標 < 984（アプリバー上端より上）** OR **フルスクリーンゲーム起動時** → TaskBarEx即座非表示
 
 #### 詳細動作仕様
 - **画面高さ**: 1080ピクセル
@@ -145,6 +149,7 @@ TaskbarViewer/
 - **アプリバー位置**: Y=984～1032（48px高さ）
 - **表示維持範囲**: Y=984～1070（86px幅）
 - **チェック間隔**: 50ms（高精度マウストラッキング）
+- **フルスクリーン検出**: 真のフルスクリーンアプリ（Rect=(0,0,1920,1080)）のみを検出、最大化ウィンドウ（Rect=(-8,-8,1928,1088)）は除外
 
 #### 実装された主要変更
 
@@ -157,20 +162,23 @@ TaskbarViewer/
 // - 表示ディレイタイマー
 ```
 
-**2. シンプルなマウス座標ベース表示制御**
+**2. フルスクリーンゲーム対応マウス座標ベース表示制御**
 ```cpp
 void TaskbarWindow::checkMousePosition()
 {
+    // フルスクリーンアプリ検出（タスクバー抑止状態の確認）
+    bool taskbarSuppressed = !isTaskbarVisible();
+    
     QPoint globalPos = QCursor::pos();
     int mouseY = globalPos.y();
     
-    // 表示判定：画面下端付近
+    // 表示判定：画面下端から10px以内 AND タスクバーが抑止されていない
     int showThreshold = m_screenHeight - 10;
-    bool shouldShow = (mouseY >= showThreshold);
+    bool shouldShow = (mouseY >= showThreshold) && !taskbarSuppressed;
     
-    // 非表示判定：アプリバー上端より上
+    // 非表示判定：アプリバー上端より上 OR タスクバーが抑止されている
     int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
-    bool shouldHide = (mouseY < hideThreshold);
+    bool shouldHide = (mouseY < hideThreshold) || taskbarSuppressed;
     
     // 表示制御
     if (shouldShow && !isVisible()) {
@@ -181,7 +189,16 @@ void TaskbarWindow::checkMousePosition()
 }
 ```
 
-**3. アプリバー表示領域の修正**
+**3. フルスクリーンアプリ検出機能**
+```cpp
+// 最大化ウィンドウ(-8px境界)とフルスクリーンアプリ(0px境界)を区別
+isFullscreenApp = (foregroundRect.left == 0 && 
+                 foregroundRect.top == 0 && 
+                 foregroundRect.right == GetSystemMetrics(SM_CXSCREEN) && 
+                 foregroundRect.bottom == screenHeight);
+```
+
+**4. アプリバー表示領域の修正**
 ```cpp
 // メニューバー・ステータスバーの完全無効化
 menuBar()->setVisible(false);

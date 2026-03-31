@@ -551,10 +551,26 @@ bool TaskbarWindow::isTaskbarVisible()
         RECT foregroundRect;
         if (GetWindowRect(foregroundWindow, &foregroundRect)) {
             // フォアグラウンドウィンドウがフルスクリーンかチェック
-            isFullscreenApp = (foregroundRect.left <= 0 && 
-                             foregroundRect.top <= 0 && 
-                             foregroundRect.right >= GetSystemMetrics(SM_CXSCREEN) && 
-                             foregroundRect.bottom >= screenHeight);
+            // 最大化ウィンドウ(-8px境界)とフルスクリーンアプリ(0px境界)を区別
+            isFullscreenApp = (foregroundRect.left == 0 && 
+                             foregroundRect.top == 0 && 
+                             foregroundRect.right == GetSystemMetrics(SM_CXSCREEN) && 
+                             foregroundRect.bottom == screenHeight);
+            
+            // フォアグラウンドウィンドウのタイトル取得（デバッグ用）
+            wchar_t windowTitle[256];
+            GetWindowText(foregroundWindow, windowTitle, sizeof(windowTitle)/sizeof(wchar_t));
+            QString title = QString::fromWCharArray(windowTitle);
+            
+            // デバッグログ（頻度制限）
+            static int fgDebugCounter = 0;
+            if (fgDebugCounter++ % 30 == 0) { // 30回に1回ログ出力
+                LOG_INFO(QString("🖼️ フォアグラウンド: %1, Rect=(%2,%3,%4,%5), フルスクリーン判定=%6")
+                         .arg(title)
+                         .arg(foregroundRect.left).arg(foregroundRect.top)
+                         .arg(foregroundRect.right).arg(foregroundRect.bottom)
+                         .arg(isFullscreenApp ? "true" : "false"));
+            }
         }
     }
     
@@ -590,26 +606,30 @@ void TaskbarWindow::checkMousePosition()
         LOG_INFO(QString("⏰ checkMousePosition() 呼び出し回数: %1").arg(timerCounter));
     }
     
+    // フルスクリーンアプリ検出（タスクバー抑止状態の確認）
+    bool taskbarSuppressed = !isTaskbarVisible();
+    
     // グローバルマウス位置を取得
     QPoint globalPos = QCursor::pos();
     int mouseY = globalPos.y();
     
-    // 新マウス座標ベース表示制御仕様
-    // 表示判定：画面下端から10px以内
+    // 新マウス座標ベース表示制御仕様（フルスクリーンゲーム対応）
+    // 表示判定：画面下端から10px以内 AND タスクバーが抑止されていない
     int showThreshold = m_screenHeight - 10;
-    bool shouldShow = (mouseY >= showThreshold);
+    bool shouldShow = (mouseY >= showThreshold) && !taskbarSuppressed;
     
-    // 非表示判定：アプリバー上端より上
+    // 非表示判定：アプリバー上端より上 OR タスクバーが抑止されている
     int hideThreshold = m_screenHeight - m_taskbarHeight - m_appBarHeight;
-    bool shouldHide = (mouseY < hideThreshold);
+    bool shouldHide = (mouseY < hideThreshold) || taskbarSuppressed;
     
     // ログ出力（デバッグ用、頻度制限）
     static int logCounter = 0;
     if (logCounter++ % 20 == 0) {  // 20回に1回ログ出力
-        LOG_INFO(QString("🖱️ マウス座標Y=%1, 表示閾値=%2, 非表示閾値=%3, shouldShow=%4, shouldHide=%5")
+        LOG_INFO(QString("🖱️ マウス座標Y=%1, 表示閾値=%2, 非表示閾値=%3, タスクバー抑止=%4, shouldShow=%5, shouldHide=%6")
                  .arg(mouseY)
                  .arg(showThreshold)
                  .arg(hideThreshold)
+                 .arg(taskbarSuppressed ? "true" : "false")
                  .arg(shouldShow ? "true" : "false")
                  .arg(shouldHide ? "true" : "false"));
     }
@@ -621,13 +641,13 @@ void TaskbarWindow::checkMousePosition()
             m_hideDelayTimer->stop();
             LOG_INFO("⏹️ 非表示ディレイタイマー停止（表示条件が満たされました）");
         }
-        LOG_INFO(QString("🚀 SHOW: マウス画面下端到達 (マウスY=%1, 表示閾値=%2)")
-                 .arg(mouseY).arg(showThreshold));
+        LOG_INFO(QString("🚀 SHOW: マウス画面下端到達 (マウスY=%1, 表示閾値=%2, タスクバー抑止=%3)")
+                 .arg(mouseY).arg(showThreshold).arg(taskbarSuppressed ? "false" : "true"));
         show();
     } else if (shouldHide && isVisible()) {
         // 非表示ディレイタイマーがまだ動作していない場合のみ開始
         if (!m_hideDelayTimer->isActive()) {
-            QString reason = "マウス上部移動";
+            QString reason = taskbarSuppressed ? "タスクバー抑止" : "マウス上部移動";
             LOG_INFO(QString("⏱️ HIDE DELAY START: %1のため0.5秒後に非表示 (マウスY=%2, 非表示閾値=%3)")
                      .arg(reason).arg(mouseY).arg(hideThreshold));
             m_hideDelayTimer->start();
