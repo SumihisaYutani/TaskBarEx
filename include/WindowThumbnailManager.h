@@ -49,6 +49,13 @@ private:
     QPixmap scaleAndCleanThumbnail(const QPixmap &source, const QSize &targetSize);
     QPixmap convertHBitmapToQPixmap(HBITMAP hBitmap);  // Qt6対応HBITMAP変換
     
+    // ブラウザ/GPUアプリ対応
+    bool isBrowserOrGPUApp(const QString &windowTitle);
+    bool isImageViewerApp(const QString &windowTitle);
+    bool isBrowserApp(const QString &windowTitle);
+    QString getWindowTitle(HWND hwnd);
+    QPixmap captureWindowDWMFallback(HWND hwnd, const QSize &targetSize);
+    
     // キャッシュ管理
     struct ThumbnailCache {
         QPixmap thumbnail;

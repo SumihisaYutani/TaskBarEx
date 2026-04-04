@@ -6,6 +6,7 @@
 #include <QBitmap>
 #include <QPainter>
 #include <QWidget>
+#include <QThread>
 
 // Windows API ヘッダー
 #include <dwmapi.h>
@@ -71,25 +72,35 @@ QPixmap WindowThumbnailManager::captureWindowThumbnail(HWND hwnd, const QSize &t
     // 1. DWM API を試行（Windows Vista以降）
     thumbnail = captureWindowDWM(hwnd, targetSize);
     if (!thumbnail.isNull()) {
-        logInfo("✅ DWM APIでサムネイル取得成功");
+        logInfo("✅ DWM APIでサムネイル取得成功（色空間正確）");
     } else {
-        logInfo("⚠️ DWM API失敗、PrintWindowを試行");
+        logInfo("⚠️ DWM API失敗、代替手段を試行");
         
-        // 2. PrintWindow API を試行
-        thumbnail = captureWindowPrintWindow(hwnd, targetSize);
-        if (!thumbnail.isNull()) {
-            logInfo("✅ PrintWindowでサムネイル取得成功");
-        } else {
-            logInfo("⚠️ PrintWindow失敗、BitBltを試行");
-            
-            // 3. BitBlt を試行（最後の手段）
-            thumbnail = captureWindowBitBlt(hwnd, targetSize);
+        // GPU描画アプリ検出（ログのみ、特別処理は一時無効化）
+        QString windowTitle = getWindowTitle(hwnd);
+        if (isBrowserOrGPUApp(windowTitle)) {
+            logInfo(QString("🎨 GPU描画アプリ検出: %1 - 通常処理で続行").arg(windowTitle));
+            // DWMフォールバックは問題があるため一時無効化
+        }
+        
+        // まだ失敗の場合は従来手法
+        if (thumbnail.isNull()) {
+            // 2. PrintWindow API を試行
+            thumbnail = captureWindowPrintWindow(hwnd, targetSize);
             if (!thumbnail.isNull()) {
-                logInfo("✅ BitBltでサムネイル取得成功");
+                logInfo("✅ PrintWindowでサムネイル取得成功");
             } else {
-                logInfo("❌ 全ての手段でサムネイル取得失敗");
-                emit thumbnailFailed(hwnd, "All capture methods failed");
-                return QPixmap();
+                logInfo("⚠️ PrintWindow失敗、BitBltを試行");
+                
+                // 3. BitBlt を試行（最後の手段）
+                thumbnail = captureWindowBitBlt(hwnd, targetSize);
+                if (!thumbnail.isNull()) {
+                    logInfo("✅ BitBltでサムネイル取得成功");
+                } else {
+                    logInfo("❌ 全ての手段でサムネイル取得失敗");
+                    emit thumbnailFailed(hwnd, "All capture methods failed");
+                    return QPixmap();
+                }
             }
         }
     }
@@ -182,6 +193,24 @@ QPixmap WindowThumbnailManager::captureWindowPrintWindow(HWND hwnd, const QSize 
         pixmap = convertHBitmapToQPixmap(bitmap);
         
         if (!pixmap.isNull()) {
+            // 画像表示アプリ・ブラウザの場合は色変換を強制適用
+            QString windowTitle = getWindowTitle(hwnd);
+            if (isImageViewerApp(windowTitle)) {
+                logInfo("🖼️ 画像表示アプリ用色変換適用");
+                QImage img = pixmap.toImage();
+                if (!img.isNull()) {
+                    img = img.rgbSwapped();  // BGR→RGB変換を強制適用
+                    pixmap = QPixmap::fromImage(img);
+                }
+            } else if (isBrowserApp(windowTitle)) {
+                logInfo("🌐 ブラウザ用色変換適用");
+                QImage img = pixmap.toImage();
+                if (!img.isNull()) {
+                    img = img.rgbSwapped();  // BGR→RGB変換を強制適用
+                    pixmap = QPixmap::fromImage(img);
+                }
+            }
+            
             // ターゲットサイズにスケール
             pixmap = scaleAndCleanThumbnail(pixmap, targetSize);
             logInfo(QString("✅ PrintWindow成功: %1x%2 -> %3x%4")
@@ -227,6 +256,17 @@ QPixmap WindowThumbnailManager::captureWindowBitBlt(HWND hwnd, const QSize &targ
     if (screenshot.isNull()) {
         logInfo("❌ スクリーンキャプチャ失敗");
         return QPixmap();
+    }
+    
+    // 色変換処理（ブラウザ・画像アプリ用）
+    QString windowTitle = getWindowTitle(hwnd);
+    if (isBrowserApp(windowTitle) || isImageViewerApp(windowTitle)) {
+        logInfo("🎨 BitBlt用色変換適用");
+        QImage img = screenshot.toImage();
+        if (!img.isNull()) {
+            img = img.rgbSwapped();  // BGR→RGB変換
+            screenshot = QPixmap::fromImage(img);
+        }
     }
     
     // スケールして返す
@@ -441,4 +481,108 @@ void WindowThumbnailManager::onCacheCleanupTimer()
     if (!expiredKeys.isEmpty()) {
         logInfo(QString("🧹 期限切れキャッシュ削除: %1個").arg(expiredKeys.size()));
     }
+}
+
+// ========== ブラウザ/GPUアプリ対応関数 ==========
+
+bool WindowThumbnailManager::isBrowserOrGPUApp(const QString &windowTitle)
+{
+    // ブラウザ、画像表示アプリ、GPU描画アプリのパターン
+    QStringList gpuAppPatterns = {
+        // ブラウザ
+        "chrome", "firefox", "edge", "opera", "safari", "brave",
+        
+        // 画像表示・編集アプリ
+        "honeyview", "irfanview", "faststone", "xnview", "acdsee", 
+        "photoshop", "gimp", "paint.net", "krita", "affinity",
+        "lightroom", "capture one", "luminar", "photos",
+        
+        // 動画プレイヤー
+        "vlc", "mpc", "potplayer", "kmplayer", "gom player",
+        
+        // GPU描画アプリ
+        "discord", "teams", "slack", "obs", "streamlabs",
+        "code", "atom", "figma", "blender", "maya", "3ds max",
+        
+        // ゲーム関連
+        "steam", "epic games", "battle.net", "origin", "uplay"
+    };
+    
+    QString lowerTitle = windowTitle.toLower();
+    for (const QString &pattern : gpuAppPatterns) {
+        if (lowerTitle.contains(pattern)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WindowThumbnailManager::isImageViewerApp(const QString &windowTitle)
+{
+    // 画像表示・編集アプリ専用パターン（色変換が必要なアプリ）
+    QStringList imageViewerPatterns = {
+        "honeyview", "irfanview", "faststone", "xnview", "acdsee",
+        "photoshop", "gimp", "paint.net", "krita", "affinity",
+        "lightroom", "capture one", "luminar", "photos"
+    };
+    
+    QString lowerTitle = windowTitle.toLower();
+    for (const QString &pattern : imageViewerPatterns) {
+        if (lowerTitle.contains(pattern)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WindowThumbnailManager::isBrowserApp(const QString &windowTitle)
+{
+    // ブラウザ専用パターン（色変換が必要なブラウザ）
+    QStringList browserPatterns = {
+        "firefox", "chrome", "edge", "opera", "safari", "brave",
+        "internet explorer", "vivaldi", "waterfox"
+    };
+    
+    QString lowerTitle = windowTitle.toLower();
+    for (const QString &pattern : browserPatterns) {
+        if (lowerTitle.contains(pattern)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString WindowThumbnailManager::getWindowTitle(HWND hwnd)
+{
+    wchar_t title[256] = {0};
+    GetWindowText(hwnd, title, 256);
+    return QString::fromWCharArray(title);
+}
+
+QPixmap WindowThumbnailManager::captureWindowDWMFallback(HWND hwnd, const QSize &targetSize)
+{
+    logInfo("🔄 DWMフォールバック手法でサムネイル取得試行");
+    
+    // ウィンドウを前面に持ってきてからキャプチャ（色空間維持）
+    HWND foregroundWindow = GetForegroundWindow();
+    SetForegroundWindow(hwnd);
+    
+    // 短時間待機してウィンドウが完全に描画されるのを待つ
+    QThread::msleep(50);
+    
+    // 通常のPrintWindowで再試行
+    QPixmap thumbnail = captureWindowPrintWindow(hwnd, targetSize);
+    
+    // 元のフォーカスを復元
+    if (foregroundWindow) {
+        SetForegroundWindow(foregroundWindow);
+    }
+    
+    if (!thumbnail.isNull()) {
+        logInfo("✅ DWMフォールバック成功");
+    } else {
+        logInfo("❌ DWMフォールバック失敗");
+    }
+    
+    return thumbnail;
 }

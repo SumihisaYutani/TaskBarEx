@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt6 設定
-set(CMAKE_PREFIX_PATH "C:/Qt/6.10.3/msvc2022_64" ${CMAKE_PREFIX_PATH})
+set(CMAKE_PREFIX_PATH "C:/Qt/6.10.0/mingw_64" ${CMAKE_PREFIX_PATH})
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 qt6_standard_project_setup()
 

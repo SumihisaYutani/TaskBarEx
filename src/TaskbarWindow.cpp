@@ -958,13 +958,7 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
         HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
         LOG_INFO(QString("🖱️ ボタンクリック検出: '%1' (HWND=%2)").arg(buttonText).arg(reinterpret_cast<quintptr>(hwnd)));
         
-        // サムネイル競合回避: クリック時に全てのサムネイル処理を即座停止
-        if (m_thumbnailDelayTimer->isActive()) {
-            m_thumbnailDelayTimer->stop();
-            LOG_INFO("⚡ ボタンクリック - サムネイルディレイタイマー即座停止");
-        }
-        
-        // サムネイルプレビューも即座に非表示
+        // サムネイルプレビューを即座に非表示
         if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
             m_thumbnailPreview->hideThumbnail();
             LOG_INFO("⚡ ボタンクリック - サムネイルプレビュー即座非表示");
@@ -1083,32 +1077,30 @@ void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& wi
 {
     LOG_INFO(QString("🖱️ ボタンホバー開始: %1").arg(windowInfo.title));
     
-    // ホバー情報を保存してタイマーを開始
+    // 同じボタンの場合は処理をスキップ（点滅防止）
+    if (m_hoverButton == button && m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+        LOG_INFO("ℹ️ 同一ボタンホバー継続中 - サムネイル表示をスキップ");
+        return;
+    }
+    
+    // ホバー情報を保存
     m_hoverButton = button;
     m_hoverWindowInfo = windowInfo;
     
-    // 既存のタイマーをリセット
+    // タイマーを停止（廃止）
     if (m_thumbnailDelayTimer->isActive()) {
         m_thumbnailDelayTimer->stop();
-        LOG_INFO("⏹️ 既存のサムネイルタイマーを停止");
+        LOG_INFO("⏹️ サムネイルタイマー停止（即座表示のため）");
     }
     
-    // 300ms後にサムネイル表示（応答性向上）
-    m_thumbnailDelayTimer->start();
-    LOG_INFO("⏰ サムネイルタイマー開始（300ms後にタイムアウト予定）");
+    // 即座にサムネイル表示
+    LOG_INFO("⚡ 即座サムネイル表示開始");
+    onThumbnailDelayTimeout();  // タイマータイムアウト処理を直接呼び出し
 }
 
 void TaskbarWindow::onButtonHoverLeave()
 {
     LOG_INFO("🖱️ ボタンホバー終了");
-    
-    // ディレイタイマーを即座停止
-    if (m_thumbnailDelayTimer->isActive()) {
-        m_thumbnailDelayTimer->stop();
-        LOG_INFO("⚡ ホバー離脱 - サムネイルディレイタイマー即座停止（タイムアウト前に離脱）");
-    } else {
-        LOG_INFO("ℹ️ ホバー離脱時にサムネイルタイマーは既に停止済み");
-    }
     
     // カスタムサムネイルプレビューを即座非表示
     if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
@@ -1136,30 +1128,24 @@ void TaskbarWindow::onGroupButtonHoverEnter(QPushButton* button)
     LOG_INFO(QString("🖱️ グループボタンホバー開始: %1 (%2個のウィンドウ)")
              .arg(representative.title).arg(groupData.size()));
     
-    // 既存のタイマーをクリア
+    // タイマーを停止（廃止）
     if (m_thumbnailDelayTimer->isActive()) {
         m_thumbnailDelayTimer->stop();
-        LOG_INFO("⏹️ 既存のサムネイルタイマーを停止");
+        LOG_INFO("⏹️ グループサムネイルタイマー停止（即座表示のため）");
     }
     
     // ホバー状態を設定
     m_hoverButton = button;
     m_hoverWindowInfo = representative;  // 代表ウィンドウ情報を保存
     
-    // タイマー開始（グループの場合も同じディレイ）
-    m_thumbnailDelayTimer->start();
-    LOG_INFO("⏰ グループサムネイル表示タイマー開始");
+    // 即座にグループサムネイル表示
+    LOG_INFO("⚡ 即座グループサムネイル表示開始");
+    onGroupThumbnailDisplay();  // グループサムネイル処理を直接呼び出し
 }
 
 void TaskbarWindow::onThumbnailDelayTimeout()
 {
-    LOG_INFO("⏰ サムネイルタイマータイムアウト開始");
-    
-    // 競合回避: タイマーを即座に停止
-    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
-        m_thumbnailDelayTimer->stop();
-        LOG_INFO("⏹️ サムネイルタイマー停止完了");
-    }
+    LOG_INFO("⚡ 即座サムネイル表示処理開始");
     
     // ボタンの厳密な妥当性チェック
     if (!m_hoverButton) {
@@ -1208,6 +1194,19 @@ void TaskbarWindow::onThumbnailDelayTimeout()
     
     // サムネイル取得前のHWNDチェック
     if (!m_hoverWindowInfo.hwnd || !IsWindow(m_hoverWindowInfo.hwnd)) {
+        // ピン留めアプリの場合はアイコンのみ表示
+        if (m_hoverButton && m_hoverButton->property("isPinnedApp").toBool()) {
+            LOG_INFO("📌 ピン留めアプリ - アイコンプレビュー表示");
+            QPixmap iconThumbnail = m_hoverWindowInfo.icon.scaled(450, 338, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            
+            QPoint buttonPos = m_hoverButton->mapToGlobal(QPoint(0, 0));
+            QPoint previewPos = QPoint(buttonPos.x() + m_hoverButton->width() / 2, buttonPos.y());
+            
+            m_thumbnailPreview->showThumbnail(iconThumbnail, m_hoverWindowInfo.title, previewPos, nullptr);
+            LOG_INFO("✅ ピン留めアプリアイコンプレビュー表示完了");
+            return;
+        }
+        
         LOG_WARNING("⚠️ 無効なウィンドウハンドル - サムネイル表示をスキップ");
         return;
     }
@@ -1547,24 +1546,19 @@ void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
 {
     LOG_INFO("🏃 起動中アプリ多段表示開始");
     
-    // サムネイル表示中の場合は更新を延期
-    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive() && m_hoverButton) {
-        LOG_INFO("⚠️ サムネイル表示中につき、レイアウト更新を延期");
-        return;
-    }
+    // サムネイルタイマー廃止により延期処理も削除
     
     // 既存の起動中アプリをクリア
     if (m_runningRowsLayout) {
         // レイアウトクリア前のクリーンアップ処理
-        if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
-            m_thumbnailDelayTimer->stop();
-            LOG_INFO("⚡ レイアウトクリア - サムネイルタイマー停止");
-        }
-        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+        // サムネイル表示中の場合は非表示にしない（点滅防止）
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible() && !m_hoverButton) {
             m_thumbnailPreview->hideThumbnail();
             LOG_INFO("⚡ レイアウトクリア - サムネイルプレビュー非表示");
+        } else if (m_hoverButton) {
+            LOG_INFO("ℹ️ ホバー中のためサムネイルプレビューを保持");
         }
-        m_hoverButton = nullptr;  // ダングリングポインタ回避
+        // ホバー状態は保持（ダングリングポインタは後で処理）
         
         QLayoutItem *item;
         while ((item = m_runningRowsLayout->takeAt(0)) != nullptr) {
@@ -1625,24 +1619,19 @@ void TaskbarWindow::populatePinnedAppsRows()
 {
     LOG_INFO("📌 ピン留めアプリ多段表示開始");
     
-    // サムネイル表示中の場合は更新を延期
-    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive() && m_hoverButton) {
-        LOG_INFO("⚠️ サムネイル表示中につき、ピン留めアプリ更新を延期");
-        return;
-    }
+    // サムネイルタイマー廃止により延期処理も削除
     
     // 既存のピン留めアプリをクリア
     if (m_pinnedRowsLayout) {
         // レイアウトクリア前のクリーンアップ処理
-        if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
-            m_thumbnailDelayTimer->stop();
-            LOG_INFO("⚡ ピン留めクリア - サムネイルタイマー停止");
-        }
-        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+        // サムネイル表示中の場合は非表示にしない（点滅防止）
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible() && !m_hoverButton) {
             m_thumbnailPreview->hideThumbnail();
             LOG_INFO("⚡ ピン留めクリア - サムネイルプレビュー非表示");
+        } else if (m_hoverButton) {
+            LOG_INFO("ℹ️ ホバー中のためサムネイルプレビューを保持");
         }
-        m_hoverButton = nullptr;  // ダングリングポインタ回避
+        // ホバー状態は保持（ダングリングポインタは後で処理）
         
         QLayoutItem *item;
         while ((item = m_pinnedRowsLayout->takeAt(0)) != nullptr) {
@@ -1749,9 +1738,6 @@ void TaskbarWindow::createAppButtonInRow(const WindowInfo& window, QHBoxLayout* 
     // クリック処理
     HWND hwnd = window.hwnd;
     connect(appButton, &QPushButton::clicked, this, [this, hwnd]() {
-        if (m_thumbnailDelayTimer->isActive()) {
-            m_thumbnailDelayTimer->stop();
-        }
         if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
             m_thumbnailPreview->hideThumbnail();
         }
@@ -1823,6 +1809,14 @@ void TaskbarWindow::createPinnedAppButtonInRow(const PinnedAppInfo& appInfo, QHB
     
     pinnedButton->setToolTip(appInfo.name);
     
+    // ピン留めアプリ用のダミーWindowInfoを設定（ホバーイベント用）
+    WindowInfo dummyWindowInfo;
+    dummyWindowInfo.title = appInfo.name;
+    dummyWindowInfo.icon = appInfo.icon;
+    dummyWindowInfo.hwnd = nullptr; // ピン留めアプリは実行中でない可能性があるためnull
+    pinnedButton->setProperty("windowInfo", QVariant::fromValue(dummyWindowInfo));
+    pinnedButton->setProperty("isPinnedApp", true); // ピン留めアプリとして識別
+    
     // クリック処理（ピン留めアプリの起動）
     QString executablePath = appInfo.executablePath;
     connect(pinnedButton, &QPushButton::clicked, this, [this, executablePath, appInfo]() {
@@ -1835,6 +1829,9 @@ void TaskbarWindow::createPinnedAppButtonInRow(const PinnedAppInfo& appInfo, QHB
             LOG_ERROR(QString("❌ ピン留めアプリ起動失敗: %1").arg(executablePath));
         }
     });
+    
+    // ホバーイベント処理用のEventFilterを設定
+    pinnedButton->installEventFilter(this);
     
     rowLayout->addWidget(pinnedButton);
 }
