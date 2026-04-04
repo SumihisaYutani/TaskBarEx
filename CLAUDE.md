@@ -348,6 +348,12 @@ ls -lt build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/log/ | head -3
 - **解決済み**: サムネイル表示中のレイアウト更新延期とボタン妥当性チェック改善
 - **ログ確認**: 「⚠️ サムネイル表示中につき、レイアウト更新を延期」「✅ ホバーボタン詳細妥当性チェック通過」
 
+**6. 起動時にターミナル（コマンドプロンプト）が表示される**
+- **原因**: CMakeLists.txt で WIN32 サブシステムが指定されていない
+- **症状**: TaskBarEx.exe 実行時に黒いコンソール窓が表示される
+- **解決済み**: `qt6_add_executable(TaskBarEx WIN32 ...)` でWIN32アプリケーション化
+- **効果**: ターミナル無しでGUIアプリケーションとして動作
+
 #### 動作確認方法（ユーザー実行用）
 
 1. **基本動作テスト**
@@ -372,6 +378,86 @@ ls -lt build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/log/ | head -3
    # ⏱️ TASKBAR HIDDEN - starting hide delay timer
    # 🔴 HIDE CONFIRMED: TaskBarExを非表示
    ```
+
+## 配布パッケージ作成
+
+**重要**: 配布パッケージ作成も**ユーザー側で実行**してください。
+
+### 配布用パッケージ作成手順
+
+#### Step 1: windeployqt で依存関係解決
+
+```bash
+# 実行ディレクトリに移動
+cd build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug
+
+# 配布用ディレクトリ作成
+mkdir ../../TaskBarEx_Portable
+cp TaskBarEx.exe ../../TaskBarEx_Portable/
+
+# Qt依存関係を自動配布（リリースモード）
+cd ../../TaskBarEx_Portable
+/c/Qt/6.10.0/mingw_64/bin/windeployqt.exe --release --no-translations TaskBarEx.exe
+
+# 結果確認
+ls -la
+```
+
+#### Step 2: 追加ファイルのコピー
+
+```bash
+# READMEとライセンス情報を追加
+cp ../README.md . 2>/dev/null || echo "README.md not found"
+cp ../LICENSE . 2>/dev/null || echo "LICENSE not found"
+
+# 設定例やドキュメントがあれば追加
+cp ../CLAUDE.md . 2>/dev/null || echo "CLAUDE.md not found"
+```
+
+#### Step 3: 配布ファイル作成
+
+```bash
+# ZIP形式で配布
+7z a TaskBarEx_Portable_v1.0.zip TaskBarEx_Portable/
+
+# または 自己展開書庫（推奨）
+7z a -sfx TaskBarEx_Setup_v1.0.exe TaskBarEx_Portable/
+```
+
+### 配布パッケージ仕様
+
+- **形式**: 自己展開書庫 (.exe) または ZIP
+- **サイズ**: 約20-30MB (Qt依存関係含む)
+- **要件**: Windows 10/11 (Qtランタイム不要)
+- **内容**:
+  - `TaskBarEx.exe` (メイン実行ファイル)
+  - Qt6 DLL群 (Core, Gui, Widgets)
+  - MinGW ランタイム
+  - プラットフォームプラグイン
+
+### 動作確認方法
+
+```bash
+# 他のPCまたはQt未インストール環境でテスト
+./TaskBarEx_Portable/TaskBarEx.exe
+
+# または自己展開書庫の場合
+./TaskBarEx_Setup_v1.0.exe  # 展開先を選択して実行
+```
+
+### トラブルシューティング
+
+**1. DLL不足エラー**
+- windeployqt の --debug オプションで詳細依存関係を確認
+- 手動でmsvcp140.dll, vcruntime140.dll 等を追加
+
+**2. プラットフォームプラグインエラー**
+- platforms/qwindows.dll が正しくコピーされているか確認
+- Qt6プラグインパスの環境変数設定
+
+**3. サイズ最適化**
+- --no-translations --no-system-d3d-compiler オプション使用
+- 不要なQtモジュール除外（--no-opengl-sw 等）
 
 ## Claude Code 対話設定
 
