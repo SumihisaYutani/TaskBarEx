@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QApplication>
+#include <algorithm>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <propvarutil.h>
@@ -145,9 +146,14 @@ void PinnedAppsManager::detectPinnedAppsFromShortcuts()
     
     QStringList filters;
     filters << "*.lnk";
-    QFileInfoList shortcutFiles = pinnedDir.entryInfoList(filters, QDir::Files);
+    QFileInfoList shortcutFiles = pinnedDir.entryInfoList(filters, QDir::Files, QDir::Name);
     
-    logInfo(QString("🔗 ショートカットファイル数: %1").arg(shortcutFiles.size()));
+    // タスクバー順序に近づけるため、ファイル作成時刻順でソート
+    std::sort(shortcutFiles.begin(), shortcutFiles.end(), [](const QFileInfo &a, const QFileInfo &b) {
+        return a.birthTime() < b.birthTime();  // 作成時刻の古い順
+    });
+    
+    logInfo(QString("🔗 ショートカットファイル数: %1（作成時刻順）").arg(shortcutFiles.size()));
     
     int order = 0;
     for (const auto &shortcutInfo : std::as_const(shortcutFiles)) {
