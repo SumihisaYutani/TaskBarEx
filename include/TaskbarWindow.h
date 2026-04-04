@@ -24,6 +24,9 @@ class QHBoxLayout;
 class QVBoxLayout;
 class QPushButton;
 
+// PinnedAppsManager からの型前方宣言
+struct PinnedAppInfo;
+
 class TaskbarWindow : public QMainWindow
 {
     Q_OBJECT
@@ -54,6 +57,7 @@ protected:
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void setupConnections();
@@ -86,23 +90,56 @@ private:
     int m_taskbarHeight;
     int m_appBarHeight;
     
-    // 2段表示システム
-    QWidget *m_runningAppsRow;    // 起動中アプリ行
-    QWidget *m_pinnedAppsRow;     // ピン留めアプリ行
-    QHBoxLayout *m_runningLayout; // 起動中アプリレイアウト
-    QHBoxLayout *m_pinnedLayout;  // ピン留めアプリレイアウト
+    // 多段表示システム
+    QWidget *m_runningAppsContainer;    // 起動中アプリコンテナ
+    QWidget *m_pinnedAppsContainer;     // ピン留めアプリコンテナ
+    QVBoxLayout *m_runningRowsLayout;   // 起動中アプリの段レイアウト
+    QVBoxLayout *m_pinnedRowsLayout;    // ピン留めアプリの段レイアウト
+    
+    // 動的レイアウト管理設定
+    static const int ICON_SIZE = 36;           // アイコンサイズ
+    static const int ICON_SPACING = 2;         // アイコン間隔
+    static const int ROW_HEIGHT = 40;          // 1段の高さ
+    static const int ROW_MARGIN = 4;           // 段の上下マージン
+    static const int SECTION_SPACING = 2;     // セクション間隔
+    static const int LABEL_WIDTH = 45;         // セクションラベル幅
+    static const int CONTAINER_MARGIN = 8;     // コンテナ左右マージン
+    
+    // 画面幅ベース動的アイコン数計算
+    int m_maxIconsPerRow;                      // 画面幅に基づく1段あたり最大アイコン数
+    int m_availableWidth;                      // 利用可能な幅
+    
+    // 段数・列数情報
+    int m_runningRowCount;     // 起動中アプリの段数
+    int m_pinnedRowCount;      // ピン留めアプリの段数
+    int m_totalRowCount;       // 総段数
     
     // サムネイル表示用データ保持
     QPushButton *m_hoverButton;
     WindowInfo m_hoverWindowInfo;
     
-    // 動的レイアウト管理
+    // 多段レイアウト管理
+    void setupMultiRowLayout();
     void updateAppBarHeight();
     void updateMouseThresholds();
-    void setupTwoRowLayout();
-    void populatePinnedAppsRow();
-    void clearRunningAppButtons();
-    void createRunningAppButton(const WindowInfo& window);
+    void calculateRowCounts();
+    void populateRunningAppsRows(const QVector<WindowInfo>& windows);
+    void populatePinnedAppsRows();
+    void clearAllAppButtons();
+    void createAppButtonInRow(const WindowInfo& window, QHBoxLayout* rowLayout, bool isPinned = false);
+    void createPinnedAppButtonInRow(const PinnedAppInfo& appInfo, QHBoxLayout* rowLayout);
+    QHBoxLayout* createNewRow(QVBoxLayout* parentLayout, const QString& sectionName);
+    
+    // 画面幅ベース動的計算
+    void calculateMaxIconsPerRow();
+    int calculateRequiredRows(int itemCount) const;
+    void updateLayoutForScreenSize();
+    
+    // 旧2段システム互換性（廃止予定）
+    void setupTwoRowLayout();  // 廃止予定
+    void populatePinnedAppsRow(); // 廃止予定
+    void clearRunningAppButtons(); // 廃止予定
+    void createRunningAppButton(const WindowInfo& window); // 廃止予定
     
     // サムネイル関連ヘルパー
     QString thumbnailToBase64(const QPixmap& pixmap);

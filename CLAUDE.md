@@ -134,6 +134,7 @@ TaskbarViewer/
 - ✅ **フルスクリーンゲーム時のTaskBarEx表示問題**
 - ✅ **最大化ウィンドウの誤フルスクリーン検出問題**
 - ✅ **サムネイル表示とボタンクリック処理の競合による応答性低下問題**
+- ✅ **サムネイル表示が機能しない問題（ウィンドウリスト更新時のホバーボタン削除）**
 
 ## 最終実装された動作仕様
 
@@ -247,9 +248,36 @@ statusBar()->setVisible(false);
 centralWidget()->layout()->setContentsMargins(0, 0, 0, 0);
 ```
 
+**6. サムネイル表示機能不具合修正（2026年4月実装）**
+```cpp
+// ウィンドウリスト更新時のホバーボタン削除問題対策
+void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
+{
+    // サムネイル表示中の場合は更新を延期
+    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive() && m_hoverButton) {
+        LOG_INFO("⚠️ サムネイル表示中につき、レイアウト更新を延期");
+        return;
+    }
+    // レイアウトクリア処理...
+}
+
+// ボタン妥当性チェック改善
+void TaskbarWindow::onThumbnailDelayTimeout()
+{
+    // オブジェクト名ではなくwindowInfoプロパティで妥当性確認
+    if (!m_hoverButton->property("windowInfo").isValid()) {
+        LOG_WARNING("⚠️ ホバーボタンのwindowInfoプロパティが無効");
+        return;
+    }
+    // サムネイル表示処理続行...
+}
+```
+
 ## 開発コマンド
 
-### ビルド手順（Claude Code用）
+**重要**: ビルドとテスト実行は**ユーザー側で実行**してください。Claude Codeはコード修正のみを行います。
+
+### ビルド手順（ユーザー実行用）
 
 ```bash
 # プロジェクトディレクトリに移動
@@ -261,26 +289,33 @@ export PATH="/c/Qt/6.10.0/mingw_64/bin:/c/Qt/Tools/CMake_64/bin:$PATH"
 # ビルド実行
 /c/Qt/Tools/CMake_64/bin/cmake.exe -B build
 /c/Qt/Tools/CMake_64/bin/cmake.exe --build build
+
+# または Qt Creator の ninja ビルド
+cd build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug
+/c/Qt/Tools/Ninja/ninja.exe
 ```
 
-### 実行パス
+### 実行パス（ユーザー実行用）
 
 ```bash
-# 実行ファイル（Qt6 DLL自動コピー済み）
+# Claude Code ビルド版実行ファイル（Qt6 DLL自動コピー済み）
 ./build/TaskBarEx.exe
 
-# 旧パス（Qt Creatorビルド用 - 現在は使用しない）
+# Qt Creator ビルド版実行ファイル（通常こちらを使用）
 ./build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/TaskBarEx.exe
 ```
 
-### ログファイル場所
+### ログファイル場所（ユーザー確認用）
 
 ```bash
-# 現在のログ保存場所
+# Claude Code ビルド版ログ
 ./build/log/TaskBarEx_YYYY-MM-DD_HH-MM-SS.log
 
+# Qt Creator ビルド版ログ（通常こちらを確認）
+./build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/log/TaskBarEx_YYYY-MM-DD_HH-MM-SS.log
+
 # 最新ログファイル確認
-ls -lt build/log/ | head -3
+ls -lt build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/log/ | head -3
 ```
 
 ### トラブルシューティング
@@ -307,20 +342,30 @@ ls -lt build/log/ | head -3
 - **原因**: 表示にディレイがあるが非表示が即座
 - **解決済み**: 非表示のみにディレイ適用で操作妨害を防止
 
-#### 動作確認方法
+**5. サムネイル表示が機能しない**
+- **原因**: 1秒間隔のウィンドウリスト更新時にホバー中のボタンが削除される
+- **症状**: ホバーイベント検出→サムネイルタイマー開始→300ms後にボタンオブジェクト無効エラー
+- **解決済み**: サムネイル表示中のレイアウト更新延期とボタン妥当性チェック改善
+- **ログ確認**: 「⚠️ サムネイル表示中につき、レイアウト更新を延期」「✅ ホバーボタン詳細妥当性チェック通過」
+
+#### 動作確認方法（ユーザー実行用）
 
 1. **基本動作テスト**
    ```bash
-   ./build/TaskBarEx.exe
+   # TaskBarEx を起動（ユーザーが実行）
+   ./build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/TaskBarEx.exe
+   
    # タスクバー自動隠し機能を有効にして以下を確認：
    # - マウス → タスクバー範囲 → TaskBarEx表示
    # - マウス → 範囲外 → TaskBarEx即座非表示
    # - タスクバー隠し → TaskBarEx 300ms後非表示
+   # - ボタンホバー → サムネイル表示（300ms後）
    ```
 
 2. **ログ確認**
    ```bash
-   tail -f build/log/TaskBarEx_*.log
+   # リアルタイムログ確認（ユーザーが実行）
+   tail -f build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug/log/TaskBarEx_*.log
    # 以下のログパターンを確認：
    # 🚀 TASKBAR APPEARED - マウスオーバーのため即座に表示
    # 🔴 HIDING TaskBarEx (taskbar visible but mouse away)

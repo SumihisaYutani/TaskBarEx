@@ -19,6 +19,7 @@
 #include <QBuffer>
 #include <QEvent>
 #include <QHoverEvent>
+#include <QResizeEvent>
 #include <windows.h>
 
 // WindowInfoをQVariantで使用できるように登録
@@ -42,10 +43,15 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_screenHeight(0)
     , m_taskbarHeight(48)  // 標準タスクバー高さ
     , m_appBarHeight(48)   // アプリバー高さ
-    , m_runningAppsRow(nullptr)
-    , m_pinnedAppsRow(nullptr)
-    , m_runningLayout(nullptr)
-    , m_pinnedLayout(nullptr)
+    , m_runningAppsContainer(nullptr)
+    , m_pinnedAppsContainer(nullptr)
+    , m_runningRowsLayout(nullptr)
+    , m_pinnedRowsLayout(nullptr)
+    , m_maxIconsPerRow(20)     // 初期値（後で画面幅に基づいて計算）
+    , m_availableWidth(0)
+    , m_runningRowCount(0)
+    , m_pinnedRowCount(0)
+    , m_totalRowCount(0)
     , m_hoverButton(nullptr)
 {
     LOG_INFO("TaskbarWindow constructor started");
@@ -152,7 +158,7 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     
     try {
         LOG_INFO("Step 2.5: Setting up two-row layout...");
-        setupTwoRowLayout(); // 2段レイアウト設定
+        setupMultiRowLayout(); // 多段レイアウト設定
         LOG_INFO("Step 2.5 completed (two-row layout enabled)");
     } catch (...) {
         LOG_ERROR("Step 2.5 (setupTwoRowLayout) failed");
@@ -327,34 +333,25 @@ void TaskbarWindow::updateTaskbarItems()
 
 void TaskbarWindow::populateTaskbarList()
 {
-    LOG_INFO("Starting populateTaskbarList (2段レイアウト対応)...");
+    LOG_INFO("Starting populateTaskbarList (多段レイアウト対応)...");
     
-    // 2段レイアウトが設定されているかチェック
-    if (!m_runningLayout) {
-        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
+    // 多段レイアウトが設定されているかチェック
+    if (!m_runningRowsLayout) {
+        LOG_ERROR("❌ 起動中アプリ多段レイアウトが初期化されていません");
         return;
     }
     
     try {
-        LOG_INFO("Step 1: 2段レイアウトコンポーネント確認...");
-        LOG_INFO("✅ 起動中アプリレイアウト使用可能");
+        LOG_INFO("Step 1: 多段レイアウトコンポーネント確認...");
+        LOG_INFO("✅ 起動中アプリ多段レイアウト使用可能");
     } catch (...) {
-        LOG_ERROR("Exception in 2段レイアウト component check");
-        return;
-    }
-    
-    try {
-        LOG_INFO("Step 2: 起動中アプリボタンをクリア...");
-        clearRunningAppButtons();
-        LOG_INFO("起動中アプリボタンクリア完了");
-    } catch (...) {
-        LOG_ERROR("Exception in clearing running app buttons");
+        LOG_ERROR("Exception in 多段レイアウト component check");
         return;
     }
     
     QVector<WindowInfo> windows;
     try {
-        LOG_INFO("Step 3: Getting visible windows...");
+        LOG_INFO("Step 2: Getting visible windows...");
         windows = m_model->getVisibleWindows();
         LOG_INFO(QString("Model returned %1 visible windows").arg(windows.size()));
     } catch (...) {
@@ -362,73 +359,74 @@ void TaskbarWindow::populateTaskbarList()
         return;
     }
     
-    QVector<QVector<WindowInfo>> groups;
+    QVector<WindowInfo> groupedWindows;
     try {
-        LOG_INFO("Step 4: Grouping windows...");
-        groups = m_groupManager->groupWindows(windows);
-        LOG_INFO(QString("GroupManager created %1 groups from %2 windows").arg(groups.size()).arg(windows.size()));
+        LOG_INFO("Step 3: Grouping windows...");
+        QVector<QVector<WindowInfo>> groups = m_groupManager->groupWindows(windows);
+        
+        // グループを代表する1つのウィンドウに統合
+        for (const auto& group : groups) {
+            if (!group.isEmpty()) {
+                groupedWindows.append(group.first()); // 各グループの最初のウィンドウを採用
+            }
+        }
+        
+        LOG_INFO(QString("GroupManager created %1 groups, grouped to %2 representative windows")
+                 .arg(groups.size()).arg(groupedWindows.size()));
     } catch (...) {
         LOG_ERROR("Exception in grouping windows");
         return;
     }
     
     try {
-        LOG_INFO("Step 5: Creating running app buttons (2段レイアウト)...");
-        int buttonCount = 0;
-        for (int groupIndex = 0; groupIndex < groups.size(); ++groupIndex) {
-            const auto& group = groups[groupIndex];
-            LOG_INFO(QString("Group %1 contains %2 windows").arg(groupIndex + 1).arg(group.size()));
-            
-            for (const auto& windowInfo : group) {
-                LOG_INFO(QString("  - Creating button for: %1 (AppId: %2, Executable: %3)")
-                         .arg(windowInfo.title)
-                         .arg(windowInfo.appUserModelId)
-                         .arg(windowInfo.executablePath));
-                try {
-                    createRunningAppButton(windowInfo);
-                    buttonCount++;
-                    LOG_INFO(QString("    Button created successfully for: %1").arg(windowInfo.title));
-                } catch (...) {
-                    LOG_ERROR(QString("    Exception creating button for: %1").arg(windowInfo.title));
-                }
-            }
-        }
-        LOG_INFO(QString("Created %1 running app buttons").arg(buttonCount));
-        
-        // 右端にスペーサー追加
-        m_runningLayout->addStretch();
-        
+        LOG_INFO("Step 4: 段数とアプリバー高さを再計算...");
+        calculateRowCounts();
+        updateAppBarHeight();
+        LOG_INFO("段数・高さ再計算完了");
     } catch (...) {
-        LOG_ERROR("Exception in creating running app buttons");
+        LOG_ERROR("Exception in recalculating rows and height");
         return;
     }
     
-    // デバッグ用：最終的なレイアウトの状態をチェック
-    LOG_INFO(QString("Final 2段レイアウト state - Running apps count: %1").arg(m_runningLayout->count()));
+    try {
+        LOG_INFO("Step 5: 起動中アプリ多段表示...");
+        populateRunningAppsRows(groupedWindows);
+        LOG_INFO("起動中アプリ多段表示完了");
+    } catch (...) {
+        LOG_ERROR("Exception in populating running apps rows");
+        return;
+    }
     
-    // アプリバー高さは2段レイアウトで86pxに固定済み（updateAppBarHeight呼び出し削除）
-    // updateAppBarHeight();
+    // マウス閾値も更新
+    try {
+        LOG_INFO("Step 6: マウス閾値更新...");
+        updateMouseThresholds();
+        LOG_INFO("マウス閾値更新完了");
+    } catch (...) {
+        LOG_ERROR("Exception in updating mouse thresholds");
+    }
     
-    LOG_INFO("✅ populateTaskbarList (2段レイアウト対応) 完了");
+    LOG_INFO("✅ populateTaskbarList (多段レイアウト対応) 完了");
 }
 
 void TaskbarWindow::clearTaskbarButtons()
 {
-    // 2段レイアウト用のclearRunningAppButtons()に委譲
-    clearRunningAppButtons();
+    // 多段レイアウト用のclearAllAppButtons()に委譲
+    clearAllAppButtons();
 }
 
 void TaskbarWindow::createTaskbarButton(const WindowInfo& window)
 {
-    // 2段レイアウト用のcreateRunningAppButton()に委譲
-    createRunningAppButton(window);
+    // 多段レイアウトでは使用しない（populateRunningAppsRowsで一括処理）
+    Q_UNUSED(window);
+    LOG_WARNING("createTaskbarButton called - 多段レイアウトでは使用されません");
 }
 
 void TaskbarWindow::updateStatusBar()
 {
-    // 2段レイアウト対応のステータスバー更新
-    int runningCount = m_runningLayout ? m_runningLayout->count() - 1 : 0; // ラベル分を引く
-    int pinnedCount = m_pinnedLayout ? m_pinnedLayout->count() - 1 : 0;   // ラベル分を引く
+    // 多段レイアウト対応のステータスバー更新
+    int runningCount = m_runningRowsLayout ? m_runningRowsLayout->count() : 0;
+    int pinnedCount = m_pinnedRowsLayout ? m_pinnedRowsLayout->count() : 0;
     
     // ステータス表示を簡素化（タスクバー風に）
     setWindowTitle(QString("TaskBarEx - %1 apps, %2 pinned").arg(runningCount).arg(pinnedCount));
@@ -678,40 +676,15 @@ void TaskbarWindow::onHideDelayTimeout()
     // 使用しない（互換性維持のためスロットのみ残す）
 }
 
-// ========== 2段表示システム実装 ==========
+// ========== 旧2段表示システム実装（無効化済み） ==========
 
 void TaskbarWindow::setupTwoRowLayout()
 {
-    LOG_INFO("🏗️ 2段レイアウト設定開始");
-    
-    // メインコンテナウィジェット取得
-    QWidget *centralWidget = this->centralWidget();
-    if (!centralWidget) {
-        LOG_ERROR("❌ centralWidget が見つかりません");
-        return;
-    }
-    
-    // 既存のレイアウトを削除（もしあれば）
-    if (centralWidget->layout()) {
-        QLayoutItem *item;
-        while ((item = centralWidget->layout()->takeAt(0)) != nullptr) {
-            delete item->widget();
-            delete item;
-        }
-        delete centralWidget->layout();
-    }
-    
-    // メインの垂直レイアウト作成
-    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(2, 2, 2, 2);  // 小さなマージン
-    mainLayout->setSpacing(1);  // 段間の境界線用スペース
-    
-    // === 上段: 起動中アプリケーション行 ===
-    m_runningAppsRow = new QWidget();
-    m_runningAppsRow->setFixedHeight(40);  // 1段の高さ
-    m_runningAppsRow->setStyleSheet("background-color: rgba(40, 40, 40, 220); border-radius: 3px;");
-    
-    m_runningLayout = new QHBoxLayout(m_runningAppsRow);
+    LOG_INFO("🏗️ 旧2段レイアウト設定 - 無効化済み（多段レイアウトを使用）");
+    // この関数は多段レイアウトシステムにより無効化済み
+    return;
+    // 以下のコードは無効化済み
+    /*
     m_runningLayout->setContentsMargins(4, 2, 4, 2);
     m_runningLayout->setSpacing(2);
     m_runningLayout->setAlignment(Qt::AlignLeft);
@@ -763,12 +736,16 @@ void TaskbarWindow::setupTwoRowLayout()
     
     // マウス閾値も更新
     updateMouseThresholds();
+    */
 }
 
 void TaskbarWindow::populatePinnedAppsRow()
 {
-    LOG_INFO("📌 ピン留めアプリ行を更新開始");
+    LOG_INFO("📌 旧ピン留めアプリ行更新 - 無効化済み（多段レイアウトを使用）");
+    // この関数は多段レイアウトシステムにより無効化済み
+    return;
     
+    /*
     if (!m_pinnedLayout) {
         LOG_ERROR("❌ ピン留めレイアウトが初期化されていません");
         return;
@@ -854,21 +831,9 @@ void TaskbarWindow::populatePinnedAppsRow()
     m_pinnedLayout->addStretch();
     
     LOG_INFO("✅ ピン留めアプリ行更新完了");
+    */
 }
 
-void TaskbarWindow::updateAppBarHeight()
-{
-    // 動的な高さ計算を一時的に無効化（固定高さに戻す）
-    int newHeight = 48;  // 固定1段高さ
-    
-    if (newHeight != m_appBarHeight) {
-        m_appBarHeight = newHeight;
-        setFixedHeight(m_appBarHeight);
-        updateMouseThresholds();
-        
-        LOG_INFO(QString("📏 アプリバー高さ固定: %1px").arg(m_appBarHeight));
-    }
-}
 
 void TaskbarWindow::updateMouseThresholds()
 {
@@ -886,11 +851,12 @@ void TaskbarWindow::updateMouseThresholds()
 
 void TaskbarWindow::clearRunningAppButtons()
 {
-    if (!m_runningLayout) {
-        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
-        return;
-    }
+    // 旧2段レイアウトシステム用関数 - 多段レイアウトでは無効化
+    LOG_INFO("🧹 旧clearRunningAppButtons呼び出し - 無効化済み");
+    return;
     
+    // 以下は旧実装（無効化済み）
+    /*
     LOG_INFO("🧹 起動中アプリボタンをクリア開始");
     
     // 既存のボタンをすべて削除（ラベル以外）
@@ -911,16 +877,18 @@ void TaskbarWindow::clearRunningAppButtons()
     }
     
     LOG_INFO("✅ 起動中アプリボタンクリア完了");
+    */
 }
 
 void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
 {
-    if (!m_runningLayout) {
-        LOG_ERROR("❌ 起動中アプリレイアウトが初期化されていません");
-        return;
-    }
+    // 旧2段レイアウトシステム用関数 - 多段レイアウトでは無効化
+    Q_UNUSED(window);
+    LOG_INFO("🔧 旧createRunningAppButton呼び出し - 無効化済み");
+    return;
     
-    // 起動中アプリボタン作成（クリック可能なQPushButton）
+    // 以下は旧実装（無効化済み）
+    /*
     QPushButton *appButton = new QPushButton();
     appButton->setFixedSize(36, 36);
     appButton->setFlat(true);  // フラットボタン
@@ -1023,16 +991,23 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
     m_runningLayout->addWidget(appButton);
     
     LOG_INFO(QString("✅ 起動中アプリボタン追加: %1").arg(window.title.isEmpty() ? window.executablePath : window.title));
+    */
 }
 
 void TaskbarWindow::createGroupButton(const QVector<WindowInfo>& group)
 {
+    // 旧2段レイアウトシステム用関数 - 多段レイアウトでは無効化
+    Q_UNUSED(group);
+    LOG_INFO("🔧 旧createGroupButton呼び出し - 無効化済み");
+    return;
+    
+    /*
     if (group.isEmpty()) return;
     
     // グループの代表ウィンドウ（最初のウィンドウ）を使用してボタンを作成
     const WindowInfo& representative = group[0];
     
-    QPushButton *groupButton = new QPushButton(m_runningAppsRow);
+    QPushButton *groupButton = new QPushButton();
     groupButton->setFixedSize(48, 48);
     groupButton->setFlat(true);
     groupButton->setStyleSheet(
@@ -1101,6 +1076,7 @@ void TaskbarWindow::createGroupButton(const QVector<WindowInfo>& group)
              .arg(representative.title.contains(" - ") ? 
                   representative.title.split(" - ").last() : representative.title)
              .arg(group.size()));
+    */
 }
 
 void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& windowInfo)
@@ -1114,10 +1090,12 @@ void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& wi
     // 既存のタイマーをリセット
     if (m_thumbnailDelayTimer->isActive()) {
         m_thumbnailDelayTimer->stop();
+        LOG_INFO("⏹️ 既存のサムネイルタイマーを停止");
     }
     
     // 300ms後にサムネイル表示（応答性向上）
     m_thumbnailDelayTimer->start();
+    LOG_INFO("⏰ サムネイルタイマー開始（300ms後にタイムアウト予定）");
 }
 
 void TaskbarWindow::onButtonHoverLeave()
@@ -1127,7 +1105,9 @@ void TaskbarWindow::onButtonHoverLeave()
     // ディレイタイマーを即座停止
     if (m_thumbnailDelayTimer->isActive()) {
         m_thumbnailDelayTimer->stop();
-        LOG_INFO("⚡ ホバー離脱 - サムネイルディレイタイマー即座停止");
+        LOG_INFO("⚡ ホバー離脱 - サムネイルディレイタイマー即座停止（タイムアウト前に離脱）");
+    } else {
+        LOG_INFO("ℹ️ ホバー離脱時にサムネイルタイマーは既に停止済み");
     }
     
     // カスタムサムネイルプレビューを即座非表示
@@ -1173,8 +1153,50 @@ void TaskbarWindow::onGroupButtonHoverEnter(QPushButton* button)
 
 void TaskbarWindow::onThumbnailDelayTimeout()
 {
+    LOG_INFO("⏰ サムネイルタイマータイムアウト開始");
+    
+    // 競合回避: タイマーを即座に停止
+    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
+        m_thumbnailDelayTimer->stop();
+        LOG_INFO("⏹️ サムネイルタイマー停止完了");
+    }
+    
+    // ボタンの厳密な妥当性チェック
     if (!m_hoverButton) {
         LOG_WARNING("⚠️ タイマータイムアウト時にホバーボタンが無効");
+        return;
+    }
+    
+    LOG_INFO("✅ ホバーボタン妥当性チェック通過");
+    
+    // QPushButtonが削除されていないかチェック
+    try {
+        // ポインタが有効で、ウィジェットとして有効かチェック
+        if (!m_hoverButton->isVisible()) {
+            LOG_WARNING("⚠️ ホバーボタンが非表示状態");
+            m_hoverButton = nullptr;
+            return;
+        }
+        
+        // 親ウィジェットが存在するかチェック
+        if (!m_hoverButton->parentWidget()) {
+            LOG_WARNING("⚠️ ホバーボタンの親ウィジェットが無効");
+            m_hoverButton = nullptr;
+            return;
+        }
+        
+        // windowInfoプロパティが存在するかチェック（オブジェクト名の代わり）
+        if (!m_hoverButton->property("windowInfo").isValid()) {
+            LOG_WARNING("⚠️ ホバーボタンのwindowInfoプロパティが無効");
+            m_hoverButton = nullptr;
+            return;
+        }
+        
+        LOG_INFO("✅ ホバーボタン詳細妥当性チェック通過");
+        
+    } catch (...) {
+        LOG_ERROR("❌ ホバーボタン妥当性チェック中に例外発生 - ボタンが削除済みの可能性");
+        m_hoverButton = nullptr;
         return;
     }
     
@@ -1183,10 +1205,23 @@ void TaskbarWindow::onThumbnailDelayTimeout()
     
     // サムネイル取得とカスタムプレビュー表示（高画質・大サイズ）
     QSize highQualitySize(450, 338); // 1.5倍サイズで高画質に（300*1.5=450, 225*1.5=337.5≒338）
+    
+    // サムネイル取得前のHWNDチェック
+    if (!m_hoverWindowInfo.hwnd || !IsWindow(m_hoverWindowInfo.hwnd)) {
+        LOG_WARNING("⚠️ 無効なウィンドウハンドル - サムネイル表示をスキップ");
+        return;
+    }
+    
     QPixmap thumbnail = m_thumbnailManager->captureWindowThumbnail(m_hoverWindowInfo.hwnd, highQualitySize);
     
     // ボタンの位置を取得してプレビュー表示位置を計算
-    QPoint buttonPos = m_hoverButton->mapToGlobal(QPoint(0, 0));
+    QPoint buttonPos;
+    try {
+        buttonPos = m_hoverButton->mapToGlobal(QPoint(0, 0));
+    } catch (...) {
+        LOG_ERROR("❌ ボタン位置取得でエラー発生 - サムネイル表示をスキップ");
+        return;
+    }
     QPoint previewPos = QPoint(buttonPos.x() + m_hoverButton->width() / 2, 
                               buttonPos.y());
     
@@ -1273,16 +1308,26 @@ bool TaskbarWindow::eventFilter(QObject *watched, QEvent *event)
         return QMainWindow::eventFilter(watched, event);
     }
     
+    // 全イベント監視用デバッグログ（ホバーイベント確認のため）
+    if (event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverLeave) {
+        LOG_INFO(QString("🔍 イベントフィルター: %1 (type=%2)").arg(button->objectName()).arg(static_cast<int>(event->type())));
+    }
+    
     switch (event->type()) {
     case QEvent::HoverEnter:
+        LOG_INFO("🖱️ HoverEnterイベント検出"); // デバッグログ追加
         // 通常のボタン（単一ウィンドウ）のみ処理
         if (button->property("windowInfo").isValid()) {
             WindowInfo windowInfo = button->property("windowInfo").value<WindowInfo>();
+            LOG_INFO(QString("🖱️ WindowInfoプロパティ有効: %1").arg(windowInfo.title)); // デバッグログ追加
             onButtonHoverEnter(button, windowInfo);
+        } else {
+            LOG_WARNING("⚠️ WindowInfoプロパティが無効"); // デバッグログ追加
         }
         return false;  // イベントを継続処理
         
     case QEvent::HoverLeave:
+        LOG_INFO("🖱️ HoverLeaveイベント検出"); // デバッグログ追加
         onButtonHoverLeave();
         return false;  // イベントを継続処理
         
@@ -1311,4 +1356,560 @@ void TaskbarWindow::onThumbnailClicked(HWND hwnd)
     
     SetForegroundWindow(hwnd);
     LOG_INFO("✅ サムネイルクリックによるウィンドウアクティベート完了");
+}
+
+// ========== 多段レイアウトシステム実装 ==========
+
+void TaskbarWindow::setupMultiRowLayout()
+{
+    LOG_INFO("🏗️ 多段レイアウト設定開始");
+    
+    // メインコンテナウィジェット取得
+    QWidget *centralWidget = this->centralWidget();
+    if (!centralWidget) {
+        LOG_ERROR("❌ centralWidget が見つかりません");
+        return;
+    }
+    
+    // 既存のレイアウトを削除（もしあれば）
+    if (centralWidget->layout()) {
+        QLayoutItem *item;
+        while ((item = centralWidget->layout()->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+        delete centralWidget->layout();
+    }
+    
+    // メインの垂直レイアウト作成
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(2, 2, 2, 2);
+    mainLayout->setSpacing(SECTION_SPACING);
+    
+    // === 起動中アプリケーション領域 ===
+    m_runningAppsContainer = new QWidget();
+    m_runningAppsContainer->setStyleSheet("background-color: rgba(40, 40, 40, 220); border-radius: 3px;");
+    
+    m_runningRowsLayout = new QVBoxLayout(m_runningAppsContainer);
+    m_runningRowsLayout->setContentsMargins(ROW_MARGIN, ROW_MARGIN, ROW_MARGIN, ROW_MARGIN);
+    m_runningRowsLayout->setSpacing(1);  // 段間の小さなスペース
+    
+    // === ピン留めアプリケーション領域 ===
+    m_pinnedAppsContainer = new QWidget();
+    m_pinnedAppsContainer->setStyleSheet("background-color: rgba(60, 60, 60, 200); border-radius: 3px;");
+    
+    m_pinnedRowsLayout = new QVBoxLayout(m_pinnedAppsContainer);
+    m_pinnedRowsLayout->setContentsMargins(ROW_MARGIN, ROW_MARGIN, ROW_MARGIN, ROW_MARGIN);
+    m_pinnedRowsLayout->setSpacing(1);  // 段間の小さなスペース
+    
+    // メインレイアウトにコンテナを追加
+    mainLayout->addWidget(m_runningAppsContainer);
+    mainLayout->addWidget(m_pinnedAppsContainer);
+    
+    // 画面幅に基づく最大アイコン数を計算
+    calculateMaxIconsPerRow();
+    
+    // 初期の段数とアプリバー高さを計算
+    calculateRowCounts();
+    updateAppBarHeight();
+    
+    LOG_INFO(QString("✅ 多段レイアウト設定完了 - 高さ: %1px").arg(m_appBarHeight));
+    
+    // ピン留めアプリマネージャー接続
+    connect(m_pinnedManager, &PinnedAppsManager::pinnedAppsChanged, 
+            this, &TaskbarWindow::populatePinnedAppsRows);
+    
+    // 初期のピン留めアプリ表示
+    populatePinnedAppsRows();
+    
+    // ピン留めアプリの自動更新開始（5秒間隔）
+    m_pinnedManager->startAutoRefresh(5000);
+    LOG_INFO("🔄 ピン留めアプリ自動更新開始（5秒間隔）");
+    
+    // マウス閾値も更新
+    updateMouseThresholds();
+}
+
+void TaskbarWindow::calculateRowCounts()
+{
+    LOG_INFO("📊 段数計算開始");
+    
+    // 起動中アプリの数を取得（グループ数を計算）
+    QVector<WindowInfo> windows = m_model->getVisibleWindows();
+    QVector<QVector<WindowInfo>> groups = m_groupManager->groupWindows(windows);
+    int runningAppsCount = groups.size();  // グループ数が表示アイコン数
+    
+    // ピン留めアプリの数を取得
+    QList<PinnedAppInfo> pinnedApps = m_pinnedManager->getPinnedApps();
+    int pinnedAppsCount = pinnedApps.size();
+    
+    // 各領域に必要な段数を計算
+    m_runningRowCount = calculateRequiredRows(runningAppsCount);
+    m_pinnedRowCount = calculateRequiredRows(pinnedAppsCount);
+    m_totalRowCount = m_runningRowCount + m_pinnedRowCount;
+    
+    LOG_INFO(QString("📊 起動中アプリ: %1個 → %2段").arg(runningAppsCount).arg(m_runningRowCount));
+    LOG_INFO(QString("📊 ピン留めアプリ: %1個 → %2段").arg(pinnedAppsCount).arg(m_pinnedRowCount));
+    LOG_INFO(QString("📊 総段数: %1段").arg(m_totalRowCount));
+}
+
+int TaskbarWindow::calculateRequiredRows(int itemCount) const
+{
+    if (itemCount == 0) return 1; // 最低1段は確保
+    return (itemCount + m_maxIconsPerRow - 1) / m_maxIconsPerRow; // 切り上げ除算（画面幅ベース）
+}
+
+void TaskbarWindow::updateAppBarHeight()
+{
+    LOG_INFO("📏 アプリバー高さ更新開始");
+    
+    // 高さ計算：(総段数 × 段高さ) + コンテナマージン + セクション間隔
+    int totalRowsHeight = m_totalRowCount * ROW_HEIGHT;
+    int containersMargin = (ROW_MARGIN * 2) * 2;  // 上下コンテナ分
+    int sectionsSpacing = SECTION_SPACING;
+    int mainLayoutMargin = 2 * 2;  // メインレイアウトの上下マージン
+    
+    m_appBarHeight = totalRowsHeight + containersMargin + sectionsSpacing + mainLayoutMargin;
+    
+    // 最小高さ確保（最低2段分）
+    int minimumHeight = (ROW_HEIGHT * 2) + containersMargin + sectionsSpacing + mainLayoutMargin;
+    if (m_appBarHeight < minimumHeight) {
+        m_appBarHeight = minimumHeight;
+    }
+    
+    LOG_INFO(QString("📏 新しいアプリバー高さ: %1px (総段数: %2)").arg(m_appBarHeight).arg(m_totalRowCount));
+    
+    // ウィンドウサイズを更新
+    setFixedHeight(m_appBarHeight);
+    
+    // コンテナの高さも調整
+    int runningContainerHeight = (m_runningRowCount * ROW_HEIGHT) + (ROW_MARGIN * 2);
+    int pinnedContainerHeight = (m_pinnedRowCount * ROW_HEIGHT) + (ROW_MARGIN * 2);
+    
+    m_runningAppsContainer->setFixedHeight(runningContainerHeight);
+    m_pinnedAppsContainer->setFixedHeight(pinnedContainerHeight);
+    
+    LOG_INFO(QString("📏 起動中アプリ領域: %1px, ピン留め領域: %2px")
+             .arg(runningContainerHeight).arg(pinnedContainerHeight));
+}
+
+void TaskbarWindow::clearAllAppButtons()
+{
+    LOG_INFO("🧹 全アプリボタンクリア開始");
+    
+    // 起動中アプリ領域をクリア
+    if (m_runningRowsLayout) {
+        QLayoutItem *item;
+        while ((item = m_runningRowsLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+    }
+    
+    // ピン留めアプリ領域をクリア
+    if (m_pinnedRowsLayout) {
+        QLayoutItem *item;
+        while ((item = m_pinnedRowsLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+    }
+    
+    LOG_INFO("🧹 全アプリボタンクリア完了");
+}
+
+QHBoxLayout* TaskbarWindow::createNewRow(QVBoxLayout* parentLayout, const QString& sectionName)
+{
+    QWidget *rowWidget = new QWidget();
+    rowWidget->setFixedHeight(ROW_HEIGHT);
+    
+    QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
+    rowLayout->setContentsMargins(2, 2, 2, 2);
+    rowLayout->setSpacing(ICON_SPACING);
+    rowLayout->setAlignment(Qt::AlignCenter);  // 中央寄せに変更
+    
+    // セクションラベルを追加（最初の段のみ）
+    if (parentLayout->count() == 0 && !sectionName.isEmpty()) {
+        QLabel *sectionLabel = new QLabel(sectionName);
+        sectionLabel->setStyleSheet("color: white; font-size: 10px; font-weight: bold;");
+        sectionLabel->setFixedWidth(45);
+        rowLayout->addWidget(sectionLabel);
+        
+        // ラベルがある場合は、ラベル後に伸縮可能なスペースを追加してアイコンを中央寄せ
+        rowLayout->addStretch();
+    }
+    
+    parentLayout->addWidget(rowWidget);
+    return rowLayout;
+}
+
+void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
+{
+    LOG_INFO("🏃 起動中アプリ多段表示開始");
+    
+    // サムネイル表示中の場合は更新を延期
+    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive() && m_hoverButton) {
+        LOG_INFO("⚠️ サムネイル表示中につき、レイアウト更新を延期");
+        return;
+    }
+    
+    // 既存の起動中アプリをクリア
+    if (m_runningRowsLayout) {
+        // レイアウトクリア前のクリーンアップ処理
+        if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
+            m_thumbnailDelayTimer->stop();
+            LOG_INFO("⚡ レイアウトクリア - サムネイルタイマー停止");
+        }
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+            m_thumbnailPreview->hideThumbnail();
+            LOG_INFO("⚡ レイアウトクリア - サムネイルプレビュー非表示");
+        }
+        m_hoverButton = nullptr;  // ダングリングポインタ回避
+        
+        QLayoutItem *item;
+        while ((item = m_runningRowsLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+    }
+    
+    if (windows.isEmpty()) {
+        // アプリがない場合でも1段は確保
+        createNewRow(m_runningRowsLayout, "起動中:");
+        LOG_INFO("🏃 起動中アプリなし - 空の段を作成");
+        return;
+    }
+    
+    // 複数段にアイコンを配置
+    int currentRow = 0;
+    int iconsInCurrentRow = 0;
+    QHBoxLayout* currentRowLayout = nullptr;
+    
+    for (int i = 0; i < windows.size(); ++i) {
+        // 新しい段が必要な場合
+        if (iconsInCurrentRow == 0) {
+            QString sectionName = (currentRow == 0) ? "起動中:" : "";
+            currentRowLayout = createNewRow(m_runningRowsLayout, sectionName);
+            
+            // セクションラベルがある場合、アイコン数を調整
+            if (!sectionName.isEmpty()) {
+                iconsInCurrentRow = 1; // ラベル分を考慮
+            }
+        }
+        
+        // アプリボタンを作成
+        createAppButtonInRow(windows[i], currentRowLayout);
+        iconsInCurrentRow++;
+        
+        // 1段の最大アイコン数に達したら次段へ
+        if (iconsInCurrentRow >= m_maxIconsPerRow) {
+            // 現在の段の右端にstretchを追加して中央寄せにする
+            if (currentRowLayout) {
+                currentRowLayout->addStretch();
+            }
+            iconsInCurrentRow = 0;
+            currentRow++;
+        }
+    }
+    
+    // 最後の段の右端にもstretchを追加
+    if (currentRowLayout) {
+        currentRowLayout->addStretch();
+    }
+    
+    LOG_INFO(QString("🏃 起動中アプリ多段表示完了 - %1個のアプリを%2段に配置")
+             .arg(windows.size()).arg(currentRow + 1));
+}
+
+void TaskbarWindow::populatePinnedAppsRows()
+{
+    LOG_INFO("📌 ピン留めアプリ多段表示開始");
+    
+    // サムネイル表示中の場合は更新を延期
+    if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive() && m_hoverButton) {
+        LOG_INFO("⚠️ サムネイル表示中につき、ピン留めアプリ更新を延期");
+        return;
+    }
+    
+    // 既存のピン留めアプリをクリア
+    if (m_pinnedRowsLayout) {
+        // レイアウトクリア前のクリーンアップ処理
+        if (m_thumbnailDelayTimer && m_thumbnailDelayTimer->isActive()) {
+            m_thumbnailDelayTimer->stop();
+            LOG_INFO("⚡ ピン留めクリア - サムネイルタイマー停止");
+        }
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+            m_thumbnailPreview->hideThumbnail();
+            LOG_INFO("⚡ ピン留めクリア - サムネイルプレビュー非表示");
+        }
+        m_hoverButton = nullptr;  // ダングリングポインタ回避
+        
+        QLayoutItem *item;
+        while ((item = m_pinnedRowsLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+    }
+    
+    QList<PinnedAppInfo> pinnedApps = m_pinnedManager->getPinnedApps();
+    
+    if (pinnedApps.isEmpty()) {
+        // ピン留めアプリがない場合でも1段は確保
+        createNewRow(m_pinnedRowsLayout, "ピン留め:");
+        LOG_INFO("📌 ピン留めアプリなし - 空の段を作成");
+        return;
+    }
+    
+    // 複数段にアイコンを配置
+    int currentRow = 0;
+    int iconsInCurrentRow = 0;
+    QHBoxLayout* currentRowLayout = nullptr;
+    
+    for (const PinnedAppInfo &appInfo : pinnedApps) {
+        if (!appInfo.isValid) continue;
+        
+        // 新しい段が必要な場合
+        if (iconsInCurrentRow == 0) {
+            QString sectionName = (currentRow == 0) ? "ピン留め:" : "";
+            currentRowLayout = createNewRow(m_pinnedRowsLayout, sectionName);
+            
+            // セクションラベルがある場合、アイコン数を調整
+            if (!sectionName.isEmpty()) {
+                iconsInCurrentRow = 1; // ラベル分を考慮
+            }
+        }
+        
+        // ピン留めアプリボタンを作成
+        createPinnedAppButtonInRow(appInfo, currentRowLayout);
+        iconsInCurrentRow++;
+        
+        // 1段の最大アイコン数に達したら次段へ
+        if (iconsInCurrentRow >= m_maxIconsPerRow) {
+            // 現在の段の右端にstretchを追加して中央寄せにする
+            if (currentRowLayout) {
+                currentRowLayout->addStretch();
+            }
+            iconsInCurrentRow = 0;
+            currentRow++;
+        }
+    }
+    
+    // 最後の段の右端にもstretchを追加
+    if (currentRowLayout) {
+        currentRowLayout->addStretch();
+    }
+    
+    LOG_INFO(QString("📌 ピン留めアプリ多段表示完了 - %1個のアプリを%2段に配置")
+             .arg(pinnedApps.size()).arg(currentRow + 1));
+}
+
+void TaskbarWindow::createAppButtonInRow(const WindowInfo& window, QHBoxLayout* rowLayout, bool isPinned)
+{
+    Q_UNUSED(isPinned); // 現在未使用
+    QPushButton *appButton = new QPushButton();
+    appButton->setFixedSize(ICON_SIZE, ICON_SIZE);
+    appButton->setFlat(true);
+    
+    // ホバーイベントを有効化
+    appButton->setAttribute(Qt::WA_Hover, true);
+    
+    // アイコン設定
+    if (!window.icon.isNull()) {
+        QPixmap scaledIcon = window.icon.scaled(ICON_SIZE-4, ICON_SIZE-4, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        appButton->setIcon(QIcon(scaledIcon));
+        appButton->setIconSize(QSize(ICON_SIZE-4, ICON_SIZE-4));
+    } else {
+        appButton->setText(window.title.left(2));
+    }
+    
+    // スタイル設定
+    appButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: rgba(80, 80, 80, 150);"
+        "    border-radius: 4px;"
+        "    border: 1px solid rgba(100, 100, 100, 100);"
+        "    color: white;"
+        "    font-size: 10px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: rgba(100, 100, 100, 180);"
+        "    border: 1px solid rgba(140, 140, 140, 180);"
+        "}"
+        "QPushButton:pressed {"
+        "    background-color: rgba(120, 120, 120, 200);"
+        "}"
+    );
+    
+    appButton->setToolTip(window.title);
+    
+    // WindowInfoプロパティを設定（ホバーイベント用）
+    appButton->setProperty("windowInfo", QVariant::fromValue(window));
+    
+    // クリック処理
+    HWND hwnd = window.hwnd;
+    connect(appButton, &QPushButton::clicked, this, [this, hwnd]() {
+        if (m_thumbnailDelayTimer->isActive()) {
+            m_thumbnailDelayTimer->stop();
+        }
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+            m_thumbnailPreview->hideThumbnail();
+        }
+        m_hoverButton = nullptr;
+        
+        if (IsIconic(hwnd)) {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        SetForegroundWindow(hwnd);
+    });
+    
+    // ホバー処理 - 直接イベントフィルターで処理
+    appButton->installEventFilter(this);
+    
+    rowLayout->addWidget(appButton);
+}
+
+void TaskbarWindow::createPinnedAppButtonInRow(const PinnedAppInfo& appInfo, QHBoxLayout* rowLayout)
+{
+    // 妥当性チェック
+    if (appInfo.name.isEmpty() || !rowLayout) {
+        LOG_ERROR("📌 無効なピン留めアプリ情報またはレイアウト");
+        return;
+    }
+    
+    QPushButton *pinnedButton = new QPushButton();
+    pinnedButton->setFixedSize(ICON_SIZE, ICON_SIZE);
+    pinnedButton->setFlat(true);
+    
+    // ホバーイベントを有効化（ツールチップ用）
+    pinnedButton->setAttribute(Qt::WA_Hover, true);
+    
+    // アイコン設定（安全性チェック追加）
+    if (!appInfo.icon.isNull() && appInfo.icon.width() > 0 && appInfo.icon.height() > 0) {
+        try {
+            QPixmap scaledIcon = appInfo.icon.scaled(ICON_SIZE-4, ICON_SIZE-4, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            if (!scaledIcon.isNull()) {
+                pinnedButton->setIcon(QIcon(scaledIcon));
+                pinnedButton->setIconSize(QSize(ICON_SIZE-4, ICON_SIZE-4));
+            } else {
+                pinnedButton->setText(appInfo.name.left(2));
+            }
+        } catch (...) {
+            LOG_ERROR(QString("📌 ピン留めアプリアイコン処理エラー: %1").arg(appInfo.name));
+            pinnedButton->setText(appInfo.name.left(2));
+        }
+    } else {
+        pinnedButton->setText(appInfo.name.left(2));
+    }
+    
+    // スタイル設定（ピン留めアプリ用に少し異なる色合い）
+    pinnedButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: rgba(70, 70, 90, 150);"
+        "    border-radius: 4px;"
+        "    border: 1px solid rgba(100, 100, 120, 100);"
+        "    color: white;"
+        "    font-size: 10px;"
+        "    font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: rgba(90, 90, 120, 180);"
+        "    border: 1px solid rgba(130, 130, 160, 180);"
+        "}"
+        "QPushButton:pressed {"
+        "    background-color: rgba(110, 110, 140, 200);"
+        "}"
+    );
+    
+    pinnedButton->setToolTip(appInfo.name);
+    
+    // クリック処理（ピン留めアプリの起動）
+    QString executablePath = appInfo.executablePath;
+    connect(pinnedButton, &QPushButton::clicked, this, [this, executablePath, appInfo]() {
+        LOG_INFO(QString("🚀 ピン留めアプリ起動: %1").arg(appInfo.name));
+        
+        QProcess process;
+        process.startDetached(executablePath);
+        
+        if (process.error() == QProcess::FailedToStart) {
+            LOG_ERROR(QString("❌ ピン留めアプリ起動失敗: %1").arg(executablePath));
+        }
+    });
+    
+    rowLayout->addWidget(pinnedButton);
+}
+
+// ========== 画面幅ベース動的計算機能 ==========
+
+void TaskbarWindow::calculateMaxIconsPerRow()
+{
+    LOG_INFO("📐 画面幅ベース最大アイコン数計算開始");
+    
+    // 画面幅を取得
+    QScreen *screen = QApplication::primaryScreen();
+    if (!screen) {
+        LOG_ERROR("❌ プライマリスクリーンが見つかりません");
+        m_maxIconsPerRow = 20; // フォールバック
+        return;
+    }
+    
+    int screenWidth = screen->size().width();
+    
+    // 利用可能な幅を計算
+    // 画面幅からコンテナのマージンとラベル幅を差し引く
+    m_availableWidth = screenWidth - (CONTAINER_MARGIN * 2) - LABEL_WIDTH - 20; // 余裕を持たせて20px追加
+    
+    // 1個のアイコンが占める幅（アイコンサイズ + 間隔）
+    int iconSpacing = ICON_SIZE + ICON_SPACING;
+    
+    // 最大アイコン数を計算（最低でも5個は確保）
+    m_maxIconsPerRow = qMax(5, m_availableWidth / iconSpacing);
+    
+    LOG_INFO(QString("📐 画面幅: %1px, 利用可能幅: %2px").arg(screenWidth).arg(m_availableWidth));
+    LOG_INFO(QString("📐 アイコン1個あたり: %1px, 最大アイコン数: %2個").arg(iconSpacing).arg(m_maxIconsPerRow));
+}
+
+void TaskbarWindow::updateLayoutForScreenSize()
+{
+    LOG_INFO("📐 画面サイズ変更に伴うレイアウト更新開始");
+    
+    // 最大アイコン数を再計算
+    calculateMaxIconsPerRow();
+    
+    // 段数を再計算
+    calculateRowCounts();
+    
+    // アプリバー高さを更新
+    updateAppBarHeight();
+    
+    // マウス閾値を更新
+    updateMouseThresholds();
+    
+    // レイアウトを更新
+    // 起動中アプリとピン留めアプリを再配置
+    QVector<WindowInfo> windows = m_model->getVisibleWindows();
+    QVector<QVector<WindowInfo>> groups = m_groupManager->groupWindows(windows);
+    
+    QVector<WindowInfo> groupedWindows;
+    for (const auto& group : groups) {
+        if (!group.isEmpty()) {
+            groupedWindows.append(group.first());
+        }
+    }
+    
+    populateRunningAppsRows(groupedWindows);
+    populatePinnedAppsRows();
+    
+    LOG_INFO("📐 画面サイズ変更に伴うレイアウト更新完了");
+}
+
+void TaskbarWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    
+    // サイズ変更時にレイアウトを更新
+    if (m_runningRowsLayout && m_pinnedRowsLayout) {
+        LOG_INFO(QString("📐 ウィンドウサイズ変更: %1x%2").arg(event->size().width()).arg(event->size().height()));
+        updateLayoutForScreenSize();
+    }
 }
