@@ -30,7 +30,7 @@ void ThumbnailPreviewWidget::setupWidget()
     setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_ShowWithoutActivating, true);
-    // サムネイルクリック機能を無効化（マウスイベント透過を削除）
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);  // マウスイベント透過で下層のボタンクリックを可能に
     setFixedSize(THUMBNAIL_WIDTH + WIDGET_MARGIN * 2, THUMBNAIL_HEIGHT + 50 + WIDGET_MARGIN * 2);
     
     // レイアウト設定
