@@ -39,7 +39,6 @@ TaskbarWindow::TaskbarWindow(QWidget *parent)
     , m_thumbnailPreview(new ThumbnailPreviewWidget(nullptr))  // サムネイルプレビュー初期化
     , m_mouseTrackTimer(new QTimer(this))
     , m_hideDelayTimer(new QTimer(this))  // 非表示ディレイタイマー初期化
-    , m_thumbnailDelayTimer(new QTimer(this))  // サムネイル表示ディレイタイマー初期化
     , m_screenHeight(0)
     , m_taskbarHeight(48)  // 標準タスクバー高さ
     , m_appBarHeight(48)   // アプリバー高さ
@@ -313,11 +312,6 @@ void TaskbarWindow::setupTimer()
     connect(m_updateTimer, &QTimer::timeout, 
             this, &TaskbarWindow::updateTaskbarItems);
             
-    // サムネイル表示ディレイタイマーのセットアップ（応答性向上）
-    m_thumbnailDelayTimer->setSingleShot(true);
-    m_thumbnailDelayTimer->setInterval(300);  // 300ms ディレイ（応答性向上）
-    connect(m_thumbnailDelayTimer, &QTimer::timeout,
-            this, &TaskbarWindow::onThumbnailDelayTimeout);
     
     LOG_INFO("Timer setup completed and ready to start");
 }
@@ -359,23 +353,47 @@ void TaskbarWindow::populateTaskbarList()
         return;
     }
     
+    // グループ化は無効化するが、同じアプリのアイコンは隣に並べる
     QVector<WindowInfo> groupedWindows;
     try {
-        LOG_INFO("Step 3: Grouping windows...");
+        LOG_INFO("Step 3: Sorting windows by application (individual display)...");
         QVector<QVector<WindowInfo>> groups = m_groupManager->groupWindows(windows);
         
-        // グループを代表する1つのウィンドウに統合
+        // グループを持つアプリを優先的に先頭に配置
+        QVector<QVector<WindowInfo>> multiWindowGroups;  // 複数ウィンドウのグループ
+        QVector<QVector<WindowInfo>> singleWindowGroups; // 単一ウィンドウのグループ
+        
+        // グループを複数/単一で分類
         for (const auto& group : groups) {
-            if (!group.isEmpty()) {
-                groupedWindows.append(group.first()); // 各グループの最初のウィンドウを採用
+            if (group.size() > 1) {
+                multiWindowGroups.append(group);  // 複数ウィンドウ（Chrome複数タブなど）
+            } else {
+                singleWindowGroups.append(group); // 単一ウィンドウ
             }
         }
         
-        LOG_INFO(QString("GroupManager created %1 groups, grouped to %2 representative windows")
-                 .arg(groups.size()).arg(groupedWindows.size()));
+        // 複数ウィンドウのグループを先頭に配置
+        for (const auto& group : multiWindowGroups) {
+            for (const auto& window : group) {
+                groupedWindows.append(window);
+            }
+        }
+        
+        // 単一ウィンドウのグループを後に配置
+        for (const auto& group : singleWindowGroups) {
+            for (const auto& window : group) {
+                groupedWindows.append(window);
+            }
+        }
+        
+        LOG_INFO(QString("Sorted %1 windows: multi-window groups (%2) first, then single windows (%3)")
+                 .arg(groupedWindows.size())
+                 .arg(multiWindowGroups.size())
+                 .arg(singleWindowGroups.size()));
     } catch (...) {
-        LOG_ERROR("Exception in grouping windows");
-        return;
+        // エラー時は元の順序を使用
+        groupedWindows = windows;
+        LOG_ERROR("Exception in sorting windows, using original order");
     }
     
     try {
@@ -958,14 +976,13 @@ void TaskbarWindow::createRunningAppButton(const WindowInfo& window)
         HWND hwnd = reinterpret_cast<HWND>(appButton->property("hwnd").toULongLong());
         LOG_INFO(QString("🖱️ ボタンクリック検出: '%1' (HWND=%2)").arg(buttonText).arg(reinterpret_cast<quintptr>(hwnd)));
         
-        // サムネイルプレビューを即座に非表示
+        // クリック優先：ホバー状態とサムネイル処理を即座停止
+        m_hoverButton = nullptr;  // ホバー状態をクリアしてサムネイル表示をキャンセル
+        
         if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
             m_thumbnailPreview->hideThumbnail();
             LOG_INFO("⚡ ボタンクリック - サムネイルプレビュー即座非表示");
         }
-        
-        // ホバー状態をクリア
-        m_hoverButton = nullptr;
         
         if (!hwnd) {
             LOG_WARNING("⚠️ 無効なHWND - ボタンクリック処理中断");
@@ -1087,15 +1104,9 @@ void TaskbarWindow::onButtonHoverEnter(QPushButton* button, const WindowInfo& wi
     m_hoverButton = button;
     m_hoverWindowInfo = windowInfo;
     
-    // タイマーを停止（廃止）
-    if (m_thumbnailDelayTimer->isActive()) {
-        m_thumbnailDelayTimer->stop();
-        LOG_INFO("⏹️ サムネイルタイマー停止（即座表示のため）");
-    }
-    
-    // 即座にサムネイル表示
+    // 即座にサムネイル表示（タイマー廃止済み）
     LOG_INFO("⚡ 即座サムネイル表示開始");
-    onThumbnailDelayTimeout();  // タイマータイムアウト処理を直接呼び出し
+    onThumbnailDelayTimeout();
 }
 
 void TaskbarWindow::onButtonHoverLeave()
@@ -1127,12 +1138,6 @@ void TaskbarWindow::onGroupButtonHoverEnter(QPushButton* button)
     
     LOG_INFO(QString("🖱️ グループボタンホバー開始: %1 (%2個のウィンドウ)")
              .arg(representative.title).arg(groupData.size()));
-    
-    // タイマーを停止（廃止）
-    if (m_thumbnailDelayTimer->isActive()) {
-        m_thumbnailDelayTimer->stop();
-        LOG_INFO("⏹️ グループサムネイルタイマー停止（即座表示のため）");
-    }
     
     // ホバー状態を設定
     m_hoverButton = button;
@@ -1313,6 +1318,16 @@ bool TaskbarWindow::eventFilter(QObject *watched, QEvent *event)
     }
     
     switch (event->type()) {
+    case QEvent::MouseButtonPress:
+        // クリック時はサムネイル処理を即座停止（クリック優先）
+        LOG_INFO("🖱️ MousePressイベント検出 - サムネイル処理を停止");
+        
+        m_hoverButton = nullptr;  // ホバー状態をクリアしてサムネイル表示をキャンセル
+        if (m_thumbnailPreview && m_thumbnailPreview->isVisible()) {
+            m_thumbnailPreview->hideThumbnail();
+        }
+        return false;  // イベントを継続処理（クリック処理を通す）
+        
     case QEvent::HoverEnter:
         LOG_INFO("🖱️ HoverEnterイベント検出"); // デバッグログ追加
         // 通常のボタン（単一ウィンドウ）のみ処理
@@ -1545,9 +1560,15 @@ QHBoxLayout* TaskbarWindow::createNewRow(QVBoxLayout* parentLayout, const QStrin
 void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
 {
     LOG_INFO("🏃 起動中アプリ多段表示開始");
-    
-    // サムネイルタイマー廃止により延期処理も削除
-    
+
+    // 【リグレッション修正】サムネイル表示中＆ホバー中はレイアウト更新を延期
+    // - 1秒タイマーによるボタン再生成がクリックイベントを破壊する問題を防止
+    // - m_thumbnailDelayTimer廃止後の代替条件として m_thumbnailPreview->isVisible() を使用
+    if (m_thumbnailPreview && m_thumbnailPreview->isVisible() && m_hoverButton) {
+        LOG_INFO("⚠️ サムネイル表示中につき、起動中アプリのレイアウト更新を延期（クリック消失防止）");
+        return;
+    }
+
     // 既存の起動中アプリをクリア
     if (m_runningRowsLayout) {
         // レイアウトクリア前のクリーンアップ処理
@@ -1559,7 +1580,7 @@ void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
             LOG_INFO("ℹ️ ホバー中のためサムネイルプレビューを保持");
         }
         // ホバー状態は保持（ダングリングポインタは後で処理）
-        
+
         QLayoutItem *item;
         while ((item = m_runningRowsLayout->takeAt(0)) != nullptr) {
             delete item->widget();
@@ -1618,9 +1639,15 @@ void TaskbarWindow::populateRunningAppsRows(const QVector<WindowInfo>& windows)
 void TaskbarWindow::populatePinnedAppsRows()
 {
     LOG_INFO("📌 ピン留めアプリ多段表示開始");
-    
-    // サムネイルタイマー廃止により延期処理も削除
-    
+
+    // 【リグレッション修正】サムネイル表示中＆ホバー中はレイアウト更新を延期
+    // - 1秒タイマーによるボタン再生成がクリックイベントを破壊する問題を防止
+    // - m_thumbnailDelayTimer廃止後の代替条件として m_thumbnailPreview->isVisible() を使用
+    if (m_thumbnailPreview && m_thumbnailPreview->isVisible() && m_hoverButton) {
+        LOG_INFO("⚠️ サムネイル表示中につき、ピン留めアプリのレイアウト更新を延期（クリック消失防止）");
+        return;
+    }
+
     // 既存のピン留めアプリをクリア
     if (m_pinnedRowsLayout) {
         // レイアウトクリア前のクリーンアップ処理
@@ -1632,7 +1659,7 @@ void TaskbarWindow::populatePinnedAppsRows()
             LOG_INFO("ℹ️ ホバー中のためサムネイルプレビューを保持");
         }
         // ホバー状態は保持（ダングリングポインタは後で処理）
-        
+
         QLayoutItem *item;
         while ((item = m_pinnedRowsLayout->takeAt(0)) != nullptr) {
             delete item->widget();
@@ -1885,12 +1912,25 @@ void TaskbarWindow::updateLayoutForScreenSize()
     // レイアウトを更新
     // 起動中アプリとピン留めアプリを再配置
     QVector<WindowInfo> windows = m_model->getVisibleWindows();
+    // グループ化を無効化するが、同じアプリを隣に並べ、複数ウィンドウのグループを優先
+    QVector<WindowInfo> groupedWindows;
     QVector<QVector<WindowInfo>> groups = m_groupManager->groupWindows(windows);
     
-    QVector<WindowInfo> groupedWindows;
+    // 複数ウィンドウのグループを先頭に配置
     for (const auto& group : groups) {
-        if (!group.isEmpty()) {
-            groupedWindows.append(group.first());
+        if (group.size() > 1) {
+            for (const auto& window : group) {
+                groupedWindows.append(window);
+            }
+        }
+    }
+    
+    // 単一ウィンドウのグループを後に配置
+    for (const auto& group : groups) {
+        if (group.size() == 1) {
+            for (const auto& window : group) {
+                groupedWindows.append(window);
+            }
         }
     }
     
