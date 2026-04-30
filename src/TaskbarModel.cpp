@@ -489,13 +489,41 @@ QPixmap TaskbarModel::getWindowIcon(HWND hwnd, bool safeMode)
     
     // 通常モード：アイコン取得を実行
     LOG_DEBUG("Normal mode: attempting icon extraction");
-    
-    // まずウィンドウから直接アイコンを取得
-    HICON hIcon = reinterpret_cast<HICON>(SendMessage(hwnd, WM_GETICON, ICON_BIG, 0));
+
+    // 【修正】SendMessageは応答しないウィンドウ（VS Code等の重いElectronアプリ）に対して
+    // UIスレッドを長時間（10秒以上）ブロックしてしまう。
+    // SendMessageTimeoutに置き換えて、応答しないウィンドウは早期スキップする。
+    // - SMTO_ABORTIFHUNG: ハングしたウィンドウに対しては即座に中断
+    // - SMTO_BLOCK: タイムアウト中、他のリクエストを処理しない（再入防止）
+    // - 100msタイムアウト: 通常応答は1ms未満。100msあれば十分
+    HICON hIcon = nullptr;
+    DWORD_PTR msgResult = 0;
+    LRESULT sendRet = SendMessageTimeoutW(
+        hwnd, WM_GETICON, ICON_BIG, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK,
+        100,  // 100ms タイムアウト
+        &msgResult);
+    if (sendRet != 0) {
+        hIcon = reinterpret_cast<HICON>(msgResult);
+    } else {
+        LOG_DEBUG("WM_GETICON(ICON_BIG) timed out or failed");
+    }
+
     if (!hIcon) {
-        hIcon = reinterpret_cast<HICON>(SendMessage(hwnd, WM_GETICON, ICON_SMALL, 0));
+        msgResult = 0;
+        sendRet = SendMessageTimeoutW(
+            hwnd, WM_GETICON, ICON_SMALL, 0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            100,
+            &msgResult);
+        if (sendRet != 0) {
+            hIcon = reinterpret_cast<HICON>(msgResult);
+        } else {
+            LOG_DEBUG("WM_GETICON(ICON_SMALL) timed out or failed");
+        }
     }
     if (!hIcon) {
+        // GetClassLongPtrはローカル呼び出しでブロックしないため安全
         hIcon = reinterpret_cast<HICON>(GetClassLongPtr(hwnd, GCLP_HICON));
     }
     
